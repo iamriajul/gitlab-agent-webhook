@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Sync Rule:** CLAUDE.md and AGENTS.md must always have identical content. If you edit either file, immediately copy it to the other. Run: `cp CLAUDE.md AGENTS.md` or `cp AGENTS.md CLAUDE.md` as appropriate.
+
 ## Project Overview
 
 **Glab Review Webhook** is a web service that handles GitLab webhooks for issues, comment mentions, and Merge Requests (MRs). It serves as an alternative to GitHub's Gemini Code Assist, but for GitLab.

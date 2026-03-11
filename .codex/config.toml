@@ -1,0 +1,2 @@
+# Codex CLI project configuration
+project_doc_fallback_filenames = ["AGENTS.md", "CLAUDE.md"]

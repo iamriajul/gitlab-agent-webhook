@@ -1,6 +1,8 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents working with code in this repository.
+
+> **Sync Rule:** AGENTS.md and CLAUDE.md must always have identical content. If you edit either file, immediately copy it to the other. Run: `cp AGENTS.md CLAUDE.md` or `cp CLAUDE.md AGENTS.md` as appropriate.
 
 ## Project Overview
 
