@@ -1,0 +1,52 @@
+import { describe, expect, it } from "bun:test";
+import { extractMentions, isBotMentioned, parseAgentDirective } from "../../src/events/mention.ts";
+
+describe("extractMentions", () => {
+  it("extracts single mention", () => {
+    expect(extractMentions("Hello @bot")).toEqual(["bot"]);
+  });
+
+  it("extracts multiple mentions", () => {
+    expect(extractMentions("@alice and @bob please review")).toEqual(["alice", "bob"]);
+  });
+
+  it("returns empty array for no mentions", () => {
+    expect(extractMentions("No mentions here")).toEqual([]);
+  });
+
+  it("handles usernames with dots and hyphens", () => {
+    expect(extractMentions("@john.doe @jane-smith")).toEqual(["john.doe", "jane-smith"]);
+  });
+});
+
+describe("isBotMentioned", () => {
+  it("returns true when bot is mentioned", () => {
+    expect(isBotMentioned("@review-bot fix this", "review-bot")).toBe(true);
+  });
+
+  it("returns false when bot is not mentioned", () => {
+    expect(isBotMentioned("@alice please help", "review-bot")).toBe(false);
+  });
+});
+
+describe("parseAgentDirective", () => {
+  it("returns default agent when no directive", () => {
+    const result = parseAgentDirective("@bot fix the login bug", "claude");
+    expect(result.agent).toBe("claude");
+  });
+
+  it("parses 'use codex' directive", () => {
+    const result = parseAgentDirective("@bot use codex to fix this", "claude");
+    expect(result.agent).toBe("codex");
+  });
+
+  it("parses 'use gemini' directive", () => {
+    const result = parseAgentDirective("@bot use gemini for review", "claude");
+    expect(result.agent).toBe("gemini");
+  });
+
+  it("is case-insensitive", () => {
+    const result = parseAgentDirective("@bot Use Codex to fix this", "claude");
+    expect(result.agent).toBe("codex");
+  });
+});

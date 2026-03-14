@@ -1,0 +1,36 @@
+# dependencies
+node_modules
+
+# build output
+dist
+*.tgz
+
+# database
+data/
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+*.log
+
+# dotenv
+.env
+.env.*.local
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# editors
+.idea
+.vscode
+
+# OS
+.DS_Store
+
+# serena (local tooling)
+.serena/

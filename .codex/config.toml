@@ -1,2 +1,21 @@
 # Codex CLI project configuration
 project_doc_fallback_filenames = ["AGENTS.md", "CLAUDE.md"]
+
+[features]
+multi_agent = true
+
+[agents]
+max_threads = 4
+max_depth = 1
+
+[agents.code-reviewer]
+description = "Reviews code changes for type safety, error handling patterns, and adherence to project conventions. Use after writing or modifying code to catch issues before committing."
+config_file = "agents/code-reviewer.toml"
+
+[agents.webhook-debugger]
+description = "Debugs webhook processing issues. Use when a webhook payload is not being handled correctly, events are being ignored unexpectedly, or the event router is not matching."
+config_file = "agents/webhook-debugger.toml"
+
+[agents.agent-sync]
+description = "Synchronizes skills, agents, and guidance files across .claude/, .agents/, and .codex/ directories. Use after adding or modifying any skill, agent, or guidance file."
+config_file = "agents/agent-sync.toml"
