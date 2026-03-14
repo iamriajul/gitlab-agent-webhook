@@ -1,21 +1,12 @@
-import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { type AppDatabase, createDatabase } from "../../src/db/database.ts";
 
-const migrationSqlPath = join(
-  process.cwd(),
-  "src",
-  "db",
-  "migrations",
-  "0000_colorful_yellowjacket.sql",
-);
+const migrationsFolder = join(process.cwd(), "src", "db", "migrations");
 
 export function createMigratedDatabase(path: string): AppDatabase {
-  const sqlite = new Database(path);
-  const migrationSql = readFileSync(migrationSqlPath, "utf8");
-  sqlite.exec(migrationSql);
-  sqlite.close();
+  const database = createDatabase(path);
+  migrate(database, { migrationsFolder });
 
-  return createDatabase(path);
+  return database;
 }
