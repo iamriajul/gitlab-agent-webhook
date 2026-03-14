@@ -1,3 +1,4 @@
+import type { JobId } from "../types/branded.ts";
 import type { AgentKind } from "../types/events.ts";
 
 export type JobStatus = "pending" | "processing" | "completed" | "failed";
@@ -26,7 +27,7 @@ export type JobPayload =
     };
 
 export interface Job {
-  readonly id: string;
+  readonly id: JobId;
   readonly payload: JobPayload;
   readonly status: JobStatus;
   readonly createdAt: Date;
