@@ -183,4 +183,65 @@ describe("createApp", () => {
       requestId: "req-456",
     });
   });
+
+  it("deduplicates by webhook UUID when idempotency key is missing", async () => {
+    const app = createApp(config, logger);
+
+    const firstResponse = await app.request("/webhook", {
+      method: "POST",
+      headers: createHeaders({
+        [WEBHOOK_HEADER_IDEMPOTENCY]: "",
+        [WEBHOOK_HEADER_UUID]: "gitlab-delivery-1",
+        "x-request-id": "proxy-request-1",
+      }),
+      body: JSON.stringify(noteOnIssuePayload),
+    });
+    const secondResponse = await app.request("/webhook", {
+      method: "POST",
+      headers: createHeaders({
+        [WEBHOOK_HEADER_IDEMPOTENCY]: "",
+        [WEBHOOK_HEADER_UUID]: "gitlab-delivery-1",
+        "x-request-id": "proxy-request-2",
+      }),
+      body: JSON.stringify(noteOnIssuePayload),
+    });
+
+    expect(firstResponse.status).toBe(202);
+    expect(secondResponse.status).toBe(202);
+    expect(await secondResponse.json()).toEqual({
+      status: "duplicate",
+      requestId: "proxy-request-2",
+    });
+  });
+
+  it("expires old delivery keys after the dedupe window", async () => {
+    let now = 10_000;
+    const app = createApp(config, logger, new Map(), {
+      dedupeTtlMs: 1_000,
+      now: () => now,
+    });
+
+    const firstResponse = await app.request("/webhook", {
+      method: "POST",
+      headers: createHeaders(),
+      body: JSON.stringify(noteOnIssuePayload),
+    });
+
+    now += 1_001;
+
+    const secondResponse = await app.request("/webhook", {
+      method: "POST",
+      headers: createHeaders({ "x-request-id": "after-ttl" }),
+      body: JSON.stringify(noteOnIssuePayload),
+    });
+
+    expect(firstResponse.status).toBe(202);
+    expect(await firstResponse.json()).toMatchObject({ status: "accepted" });
+    expect(secondResponse.status).toBe(202);
+    expect(await secondResponse.json()).toEqual({
+      status: "accepted",
+      jobId: null,
+      requestId: "after-ttl",
+    });
+  });
 });

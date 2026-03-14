@@ -8,6 +8,7 @@ const REQUEST_ID_HEADER = "x-request-id";
 declare module "hono" {
   interface ContextVariableMap {
     readonly requestId: string;
+    readonly deliveryId: string;
     readonly logger: Logger;
   }
 }
@@ -40,10 +41,18 @@ export function authMiddleware(secret: string, logger: Logger) {
 
 export function requestIdMiddleware(logger: Logger) {
   return async (c: Context, next: Next): Promise<void> => {
+    const webhookUuid = c.req.header(WEBHOOK_HEADER_UUID) ?? "";
+    const requestIdHeader = c.req.header(REQUEST_ID_HEADER) ?? "";
     const requestId =
-      c.req.header(REQUEST_ID_HEADER) ?? c.req.header(WEBHOOK_HEADER_UUID) ?? randomUUID();
+      requestIdHeader.length > 0
+        ? requestIdHeader
+        : webhookUuid.length > 0
+          ? webhookUuid
+          : randomUUID();
+    const deliveryId = webhookUuid.length > 0 ? webhookUuid : requestId;
     const requestLogger = logger.child({ requestId });
     c.set("requestId", requestId);
+    c.set("deliveryId", deliveryId);
     c.set("logger", requestLogger);
     c.header(REQUEST_ID_HEADER, requestId);
 

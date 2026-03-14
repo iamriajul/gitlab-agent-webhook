@@ -6,7 +6,14 @@ import { parseWebhookPayload } from "../events/parser.ts";
 import { routeEvent } from "../events/router.ts";
 import { authMiddleware, requestIdMiddleware } from "./middleware.ts";
 
-type DeliveryStore = Set<string>;
+type DeliveryStore = Map<string, number>;
+
+type AppOptions = {
+  readonly dedupeTtlMs?: number;
+  readonly now?: () => number;
+};
+
+const DEFAULT_DEDUPE_TTL_MS = 60 * 60 * 1000;
 
 function jsonResponse(
   requestId: string,
@@ -19,19 +26,34 @@ function jsonResponse(
   );
 }
 
-function getDeliveryKey(idempotencyKey: string, requestId: string): string {
+function getDeliveryKey(idempotencyKey: string, deliveryId: string): string {
   if (idempotencyKey.length > 0) {
     return idempotencyKey;
   }
 
-  return requestId;
+  return deliveryId;
+}
+
+function pruneExpiredDeliveries(
+  deliveryStore: DeliveryStore,
+  now: number,
+  dedupeTtlMs: number,
+): void {
+  for (const [deliveryKey, seenAt] of deliveryStore.entries()) {
+    if (now - seenAt > dedupeTtlMs) {
+      deliveryStore.delete(deliveryKey);
+    }
+  }
 }
 
 export function createApp(
   config: Config,
   logger: Logger,
-  deliveryStore: DeliveryStore = new Set(),
+  deliveryStore: DeliveryStore = new Map(),
+  options: AppOptions = {},
 ): Hono {
+  const dedupeTtlMs = options.dedupeTtlMs ?? DEFAULT_DEDUPE_TTL_MS;
+  const now = options.now ?? Date.now;
   const app = new Hono();
   app.use("*", requestIdMiddleware(logger));
 
@@ -44,6 +66,7 @@ export function createApp(
 
   webhook.post("/", async (c) => {
     const requestId = c.var.requestId;
+    const deliveryId = c.var.deliveryId;
     const requestLogger = c.var.logger;
     const eventType = c.req.header(WEBHOOK_HEADER_EVENT) ?? "";
     const idempotencyKey = c.req.header(WEBHOOK_HEADER_IDEMPOTENCY) ?? "";
@@ -82,12 +105,14 @@ export function createApp(
       });
     }
 
-    const deliveryKey = getDeliveryKey(idempotencyKey, requestId);
+    pruneExpiredDeliveries(deliveryStore, now(), dedupeTtlMs);
+
+    const deliveryKey = getDeliveryKey(idempotencyKey, deliveryId);
     if (deliveryStore.has(deliveryKey)) {
       requestLogger.info({ deliveryKey }, "Duplicate webhook delivery ignored");
       return jsonResponse(requestId, 202, { status: "duplicate" });
     }
-    deliveryStore.add(deliveryKey);
+    deliveryStore.set(deliveryKey, now());
 
     const routeResult = routeEvent(parseResult.value, requestLogger);
     if (routeResult.isErr()) {
