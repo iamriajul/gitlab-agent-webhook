@@ -1,0 +1,21 @@
+pre-commit:
+  parallel: true
+  commands:
+    typecheck:
+      glob: "*.ts"
+      run: bunx tsc --noEmit
+    lint-and-format:
+      glob: "*.ts"
+      run: bunx biome check --error-on-warnings src/ tests/
+    test:
+      glob: "*.ts"
+      run: bun test --bail
+    sync-guidance:
+      run: diff -q CLAUDE.md AGENTS.md || (echo "CLAUDE.md and AGENTS.md are out of sync" && exit 1)
+    sync-skills:
+      run: diff -rq .claude/skills/ .agents/skills/ || (echo ".claude/skills/ and .agents/skills/ are out of sync" && exit 1)
+
+pre-push:
+  commands:
+    full-check:
+      run: bun run check
