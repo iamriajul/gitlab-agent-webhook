@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import pino from "pino";
-import { routeEvent, type RoutingConfig } from "../../src/events/router.ts";
 import type {
   MergeRequestPayload,
   NoteOnIssuePayload,
   NoteOnMRPayload,
 } from "../../src/events/parser.ts";
+import { type RoutingConfig, routeEvent } from "../../src/events/router.ts";
 import type { WebhookEvent } from "../../src/types/events.ts";
 
 const logger = pino({ enabled: false });

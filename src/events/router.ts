@@ -1,10 +1,10 @@
 import type { Logger } from "../config/logger.ts";
-import { isBotMentioned, parseAgentDirective } from "./mention.ts";
 import type { JobPayload } from "../jobs/types.ts";
 import type { AppError } from "../types/errors.ts";
 import type { AgentKind, WebhookEvent } from "../types/events.ts";
 import type { Result } from "../types/result.ts";
 import { ok } from "../types/result.ts";
+import { isBotMentioned, parseAgentDirective } from "./mention.ts";
 
 export interface RoutingConfig {
   readonly botUsername: string;
@@ -42,8 +42,7 @@ function createMrReviewDecision(
 
   return {
     kind: "enqueue",
-    idempotencyKey:
-      `mr:${project}:${mrIid}:update:${event.payload.object_attributes.last_commit.id}`,
+    idempotencyKey: `mr:${project}:${mrIid}:update:${event.payload.object_attributes.last_commit.id}`,
     payload: {
       kind: "review_mr",
       project,
