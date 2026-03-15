@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDatabase } from "../../src/db/database.ts";
 import { createJobQueue } from "../../src/jobs/queue.ts";
+import { createMigratedDatabase } from "../helpers/database.ts";
 
 let databasePath = "";
 
@@ -23,7 +23,7 @@ afterEach(() => {
 
 describe("createJobQueue", () => {
   it("enqueues and finds a job by idempotency key", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
 
     const enqueueResult = queue.enqueue({
@@ -58,7 +58,7 @@ describe("createJobQueue", () => {
   });
 
   it("returns the existing job for a duplicate idempotency key", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
 
     const firstResult = queue.enqueue({
@@ -107,7 +107,7 @@ describe("createJobQueue", () => {
   });
 
   it("claims the oldest pending job and marks it as processing", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
 
     queue.enqueue({
@@ -142,7 +142,7 @@ describe("createJobQueue", () => {
   });
 
   it("completes a claimed job", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
 
     queue.enqueue({
@@ -168,7 +168,7 @@ describe("createJobQueue", () => {
   });
 
   it("fails a claimed job and increments retry count", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
 
     queue.enqueue({
@@ -202,7 +202,7 @@ describe("createJobQueue", () => {
   });
 
   it("returns null when there are no pending jobs to claim", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
 
     const claimResult = queue.claimNext();

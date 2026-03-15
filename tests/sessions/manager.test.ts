@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDatabase } from "../../src/db/database.ts";
 import { createSessionManager } from "../../src/sessions/manager.ts";
+import { createMigratedDatabase } from "../helpers/database.ts";
 
 let databasePath = "";
 
@@ -23,7 +23,7 @@ afterEach(() => {
 
 describe("createSessionManager", () => {
   it("creates and looks up an issue session by context", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const manager = createSessionManager(database);
 
     const createResult = manager.create({
@@ -60,7 +60,7 @@ describe("createSessionManager", () => {
   });
 
   it("updates last activity and agent session id", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const manager = createSessionManager(database);
 
     const createResult = manager.create({
@@ -88,7 +88,7 @@ describe("createSessionManager", () => {
   });
 
   it("marks a session with a final status", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const manager = createSessionManager(database);
 
     const createResult = manager.create({
@@ -116,7 +116,7 @@ describe("createSessionManager", () => {
   });
 
   it("returns null when no session exists for a context", () => {
-    const database = createDatabase(databasePath);
+    const database = createMigratedDatabase(databasePath);
     const manager = createSessionManager(database);
 
     const lookupResult = manager.findByContext({
