@@ -33,20 +33,36 @@ describe("parseAgentDirective", () => {
   it("returns default agent when no directive", () => {
     const result = parseAgentDirective("@bot fix the login bug", "claude");
     expect(result.agent).toBe("claude");
+    expect(result.prompt).toBe("fix the login bug");
   });
 
   it("parses 'use codex' directive", () => {
     const result = parseAgentDirective("@bot use codex to fix this", "claude");
     expect(result.agent).toBe("codex");
+    expect(result.prompt).toBe("to fix this");
   });
 
   it("parses 'use gemini' directive", () => {
     const result = parseAgentDirective("@bot use gemini for review", "claude");
     expect(result.agent).toBe("gemini");
+    expect(result.prompt).toBe("for review");
   });
 
   it("is case-insensitive", () => {
     const result = parseAgentDirective("@bot Use Codex to fix this", "claude");
     expect(result.agent).toBe("codex");
+    expect(result.prompt).toBe("to fix this");
+  });
+
+  it("strips multiple mentions from the routed prompt", () => {
+    const result = parseAgentDirective("@alice @bot please investigate this", "claude");
+    expect(result.agent).toBe("claude");
+    expect(result.prompt).toBe("please investigate this");
+  });
+
+  it("keeps the original note when stripping would empty the prompt", () => {
+    const result = parseAgentDirective("@bot use codex", "claude");
+    expect(result.agent).toBe("codex");
+    expect(result.prompt).toBe("@bot use codex");
   });
 });
