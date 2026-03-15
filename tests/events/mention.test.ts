@@ -73,4 +73,12 @@ describe("parseAgentDirective", () => {
     expect(result.agent).toBe("codex");
     expect(result.prompt).toBe("- investigate\n  - keep indentation\n\n```ts\nconst x = 1;\n```");
   });
+
+  it("preserves leading indentation on the first content line", () => {
+    const note = "@review-bot use codex\n    print('x')";
+    const result = parseAgentDirective(note, "claude");
+
+    expect(result.agent).toBe("codex");
+    expect(result.prompt).toBe("    print('x')");
+  });
 });

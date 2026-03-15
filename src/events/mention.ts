@@ -20,9 +20,14 @@ const AGENT_KEYWORDS: ReadonlyMap<string, AgentKind> = new Map([
 
 const LEADING_MENTIONS_REGEX = /^(?:\s*@[\w.-]+\s*)+/;
 const AGENT_DIRECTIVE_REGEX = /\buse\s+(claude|codex|gemini)\b/i;
+const AGENT_DIRECTIVE_CLEANUP_REGEX = /[ \t]*\buse\s+(claude|codex|gemini)\b[ \t]*/i;
 
 function stripRoutingSyntax(note: string): string {
-  return note.replace(LEADING_MENTIONS_REGEX, "").replace(AGENT_DIRECTIVE_REGEX, "").trim();
+  return note
+    .replace(LEADING_MENTIONS_REGEX, "")
+    .replace(AGENT_DIRECTIVE_CLEANUP_REGEX, "")
+    .replace(/^\r?\n/, "")
+    .replace(/[ \t\r\n]+$/, "");
 }
 
 export function parseAgentDirective(
