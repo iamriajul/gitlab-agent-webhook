@@ -22,11 +22,7 @@ const LEADING_MENTIONS_REGEX = /^(?:\s*@[\w.-]+\s*)+/;
 const AGENT_DIRECTIVE_REGEX = /\buse\s+(claude|codex|gemini)\b/i;
 
 function stripRoutingSyntax(note: string): string {
-  return note
-    .replace(LEADING_MENTIONS_REGEX, "")
-    .replace(AGENT_DIRECTIVE_REGEX, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return note.replace(LEADING_MENTIONS_REGEX, "").replace(AGENT_DIRECTIVE_REGEX, "").trim();
 }
 
 export function parseAgentDirective(

@@ -187,7 +187,7 @@ describe("routeEvent", () => {
 
     expect(result.value).toEqual({
       kind: "enqueue",
-      idempotencyKey: "mr:team/project:16:open",
+      idempotencyKey: "mr:team/project:16:commit:abc123",
       payload: {
         kind: "review_mr",
         project: "team/project",
@@ -206,7 +206,7 @@ describe("routeEvent", () => {
 
     expect(result.value).toEqual({
       kind: "enqueue",
-      idempotencyKey: "mr:team/project:16:update:abc123",
+      idempotencyKey: "mr:team/project:16:commit:abc123",
       payload: {
         kind: "review_mr",
         project: "team/project",

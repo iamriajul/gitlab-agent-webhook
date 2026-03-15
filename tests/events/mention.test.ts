@@ -65,4 +65,12 @@ describe("parseAgentDirective", () => {
     expect(result.agent).toBe("codex");
     expect(result.prompt).toBe("@bot use codex");
   });
+
+  it("preserves multiline formatting while stripping routing syntax", () => {
+    const note = "@bot use codex\n- investigate\n  - keep indentation\n\n```ts\nconst x = 1;\n```";
+    const result = parseAgentDirective(note, "claude");
+
+    expect(result.agent).toBe("codex");
+    expect(result.prompt).toBe("- investigate\n  - keep indentation\n\n```ts\nconst x = 1;\n```");
+  });
 });

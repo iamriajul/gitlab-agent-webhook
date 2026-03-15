@@ -27,22 +27,11 @@ function createMrReviewDecision(
 ): RoutingDecision {
   const project = event.payload.project.path_with_namespace;
   const mrIid = event.payload.object_attributes.iid;
-
-  if (event.kind === "mr_opened") {
-    return {
-      kind: "enqueue",
-      idempotencyKey: `mr:${project}:${mrIid}:open`,
-      payload: {
-        kind: "review_mr",
-        project,
-        mrIid,
-      },
-    };
-  }
+  const commitSha = event.payload.object_attributes.last_commit.id;
 
   return {
     kind: "enqueue",
-    idempotencyKey: `mr:${project}:${mrIid}:update:${event.payload.object_attributes.last_commit.id}`,
+    idempotencyKey: `mr:${project}:${mrIid}:commit:${commitSha}`,
     payload: {
       kind: "review_mr",
       project,
