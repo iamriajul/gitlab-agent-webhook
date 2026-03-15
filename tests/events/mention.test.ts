@@ -81,4 +81,12 @@ describe("parseAgentDirective", () => {
     expect(result.agent).toBe("codex");
     expect(result.prompt).toBe("    print('x')");
   });
+
+  it("preserves first-line indentation when only mention syntax is stripped", () => {
+    const note = "@review-bot\n    print('x')";
+    const result = parseAgentDirective(note, "claude");
+
+    expect(result.agent).toBe("claude");
+    expect(result.prompt).toBe("    print('x')");
+  });
 });
