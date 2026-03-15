@@ -6,38 +6,133 @@ import { parseWebhookPayload } from "../events/parser.ts";
 import { routeEvent } from "../events/router.ts";
 import { authMiddleware, requestIdMiddleware } from "./middleware.ts";
 
-export function createApp(config: Config, logger: Logger): Hono {
+type DeliveryStore = Map<string, number>;
+
+type AppOptions = {
+  readonly dedupeTtlMs?: number;
+  readonly now?: () => number;
+};
+
+const DEFAULT_DEDUPE_TTL_MS = 60 * 60 * 1000;
+
+function jsonResponse(
+  requestId: string,
+  statusCode: number,
+  payload: Record<string, unknown>,
+): Response {
+  return Response.json(
+    { ...payload, requestId },
+    { status: statusCode, headers: { "x-request-id": requestId } },
+  );
+}
+
+function getDeliveryKey(idempotencyKey: string, deliveryId: string): string {
+  if (idempotencyKey.length > 0) {
+    return idempotencyKey;
+  }
+
+  return deliveryId;
+}
+
+function pruneExpiredDeliveries(
+  deliveryStore: DeliveryStore,
+  now: number,
+  dedupeTtlMs: number,
+): void {
+  for (const [deliveryKey, seenAt] of deliveryStore.entries()) {
+    if (now - seenAt > dedupeTtlMs) {
+      deliveryStore.delete(deliveryKey);
+    }
+  }
+}
+
+export function createApp(
+  config: Config,
+  logger: Logger,
+  deliveryStore: DeliveryStore = new Map(),
+  options: AppOptions = {},
+): Hono {
+  const dedupeTtlMs = options.dedupeTtlMs ?? DEFAULT_DEDUPE_TTL_MS;
+  const now = options.now ?? Date.now;
   const app = new Hono();
+  app.use("*", requestIdMiddleware(logger));
 
   app.get("/health", (c) => {
-    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+    return jsonResponse(c.var.requestId, 200, { status: "ok" });
   });
 
   const webhook = new Hono();
-  webhook.use("*", requestIdMiddleware(logger));
   webhook.use("*", authMiddleware(config.gitlabWebhookSecret, logger));
 
   webhook.post("/", async (c) => {
+    const requestId = c.var.requestId;
+    const deliveryId = c.var.deliveryId;
+    const requestLogger = c.var.logger;
     const eventType = c.req.header(WEBHOOK_HEADER_EVENT) ?? "";
     const idempotencyKey = c.req.header(WEBHOOK_HEADER_IDEMPOTENCY) ?? "";
-    const body: unknown = await c.req.json();
 
-    logger.info({ eventType, idempotencyKey }, "Processing webhook");
+    requestLogger.info({ eventType, idempotencyKey }, "Processing webhook");
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      requestLogger.warn("Webhook payload is not valid JSON");
+      return jsonResponse(requestId, 400, {
+        status: "error",
+        error: { code: "invalid_payload", message: "Request body must be valid JSON" },
+      });
+    }
 
     const parseResult = parseWebhookPayload(eventType, body);
     if (parseResult.isErr()) {
-      logger.error({ error: parseResult.error }, "Failed to parse webhook payload");
-      return c.json({ error: parseResult.error.message }, 400);
+      requestLogger.warn({ error: parseResult.error }, "Failed to parse webhook payload");
+      return Response.json(
+        {
+          status: "error",
+          error: { code: "invalid_payload", message: parseResult.error.message },
+          requestId,
+        },
+        { status: 400, headers: { "x-request-id": requestId } },
+      );
     }
 
-    const routeResult = routeEvent(parseResult.value, logger);
+    if (parseResult.value.kind === "ignored") {
+      requestLogger.info({ reason: parseResult.value.reason }, "Webhook event ignored");
+      return jsonResponse(requestId, 202, {
+        status: "ignored",
+        reason: parseResult.value.reason,
+      });
+    }
+
+    pruneExpiredDeliveries(deliveryStore, now(), dedupeTtlMs);
+
+    const deliveryKey = getDeliveryKey(idempotencyKey, deliveryId);
+    if (deliveryStore.has(deliveryKey)) {
+      requestLogger.info({ deliveryKey }, "Duplicate webhook delivery ignored");
+      return jsonResponse(requestId, 202, { status: "duplicate" });
+    }
+    deliveryStore.set(deliveryKey, now());
+
+    const routeResult = routeEvent(parseResult.value, requestLogger);
     if (routeResult.isErr()) {
-      logger.error({ error: routeResult.error }, "Failed to route event");
-      return c.json({ error: routeResult.error.message }, 500);
+      deliveryStore.delete(deliveryKey);
+      requestLogger.error({ error: routeResult.error }, "Failed to route event");
+      return Response.json(
+        {
+          status: "error",
+          error: { code: "internal_error", message: routeResult.error.message },
+          requestId,
+        },
+        { status: 500, headers: { "x-request-id": requestId } },
+      );
     }
 
     const jobIdValue = routeResult.value;
-    return c.json({ status: "accepted", jobId: jobIdValue }, 200);
+    return Response.json(
+      { status: "accepted", jobId: jobIdValue, requestId },
+      { status: 202, headers: { "x-request-id": requestId } },
+    );
   });
 
   app.route("/webhook", webhook);
