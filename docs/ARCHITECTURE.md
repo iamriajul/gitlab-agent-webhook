@@ -25,7 +25,7 @@
 - [ ] **F1.2** Verify webhook secret (`X-Gitlab-Token` header)
 - [ ] **F1.3** Parse `@bot-username` mentions from `object_attributes.note`
 - [ ] **F1.4** Instantly add "eyes" (👀) emoji reaction to acknowledge the comment
-- [ ] **F1.5** Parse agent directive from mention (e.g., `@bot fix this`, `@bot use codex`, `@bot review`)
+- [ ] **F1.5** Parse agent selector from mention prefix (e.g., `@bot codex fix this`, `@bot fix this`, `@bot review`)
 - [ ] **F1.6** Enqueue background job with: agent type, issue context, comment text, project info
 - [ ] **F1.7** Spawn AI agent CLI (`claude`, `codex`, or `gemini`) in background worker
 - [ ] **F1.8** Provide system instructions to agent (non-interactive mode, use GitLab CLI for output)
@@ -739,7 +739,7 @@ GitLab POST /webhook
 ```
 Poll jobs table for status='pending'
   → Update status to 'processing'
-  → Resolve agent type (from directive or default)
+  → Resolve agent type (from leading selector token or default)
   → Check for existing session (for follow-ups)
   → Prepare working directory (clone/checkout if needed)
   → Build system prompt (non-interactive autonomy instructions)

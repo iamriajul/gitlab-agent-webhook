@@ -30,26 +30,26 @@ describe("isBotMentioned", () => {
 });
 
 describe("parseAgentDirective", () => {
-  it("returns default agent when no directive", () => {
+  it("returns default agent when no selector prefix", () => {
     const result = parseAgentDirective("@bot fix the login bug", "claude");
     expect(result.agent).toBe("claude");
     expect(result.prompt).toBe("fix the login bug");
   });
 
-  it("parses 'use codex' directive", () => {
-    const result = parseAgentDirective("@bot use codex to fix this", "claude");
+  it("parses a leading codex selector", () => {
+    const result = parseAgentDirective("@bot codex to fix this", "claude");
     expect(result.agent).toBe("codex");
     expect(result.prompt).toBe("to fix this");
   });
 
-  it("parses 'use gemini' directive", () => {
-    const result = parseAgentDirective("@bot use gemini for review", "claude");
+  it("parses a leading gemini selector", () => {
+    const result = parseAgentDirective("@bot gemini for review", "claude");
     expect(result.agent).toBe("gemini");
     expect(result.prompt).toBe("for review");
   });
 
   it("is case-insensitive", () => {
-    const result = parseAgentDirective("@bot Use Codex to fix this", "claude");
+    const result = parseAgentDirective("@bot CoDeX to fix this", "claude");
     expect(result.agent).toBe("codex");
     expect(result.prompt).toBe("to fix this");
   });
@@ -61,13 +61,13 @@ describe("parseAgentDirective", () => {
   });
 
   it("keeps the original note when stripping would empty the prompt", () => {
-    const result = parseAgentDirective("@bot use codex", "claude");
+    const result = parseAgentDirective("@bot codex", "claude");
     expect(result.agent).toBe("codex");
-    expect(result.prompt).toBe("@bot use codex");
+    expect(result.prompt).toBe("@bot codex");
   });
 
   it("preserves multiline formatting while stripping routing syntax", () => {
-    const note = "@bot use codex\n- investigate\n  - keep indentation\n\n```ts\nconst x = 1;\n```";
+    const note = "@bot codex\n- investigate\n  - keep indentation\n\n```ts\nconst x = 1;\n```";
     const result = parseAgentDirective(note, "claude");
 
     expect(result.agent).toBe("codex");
@@ -75,7 +75,7 @@ describe("parseAgentDirective", () => {
   });
 
   it("preserves leading indentation on the first content line", () => {
-    const note = "@review-bot use codex\n    print('x')";
+    const note = "@review-bot codex\n    print('x')";
     const result = parseAgentDirective(note, "claude");
 
     expect(result.agent).toBe("codex");
@@ -94,7 +94,7 @@ describe("parseAgentDirective", () => {
     const note = "@review-bot please use codex to fix this";
     const result = parseAgentDirective(note, "claude");
 
-    expect(result.agent).toBe("codex");
+    expect(result.agent).toBe("claude");
     expect(result.prompt).toBe("please use codex to fix this");
   });
 });

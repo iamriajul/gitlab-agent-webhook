@@ -109,7 +109,7 @@ function createMergeRequestEvent(kind: "mr_opened" | "mr_updated"): WebhookEvent
 describe("routeEvent", () => {
   it("routes issue mentions into mention jobs", () => {
     const result = routeEvent(
-      createIssueNoteEvent("@review-bot use codex please fix the flaky test"),
+      createIssueNoteEvent("@review-bot codex please fix the flaky test"),
       routingConfig,
       logger,
     );

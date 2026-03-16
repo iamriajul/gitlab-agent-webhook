@@ -22,3 +22,10 @@ The service does **not** use direct AI APIs. Instead, it shells out to locally i
 - Automated MR code reviews triggered by webhook events
 - Comment and status updates on GitLab via `glab` CLI
 - Issue mention handling — developers can trigger MR creation from issue comments
+
+## Mention Syntax
+
+- Bot mentions trigger routing: `@review-bot ...`
+- Optional agent selector is only recognized as the first token after mention stripping:
+  - `@review-bot codex please fix this` → selects `codex`
+  - `@review-bot please use codex to fix this` → keeps default agent

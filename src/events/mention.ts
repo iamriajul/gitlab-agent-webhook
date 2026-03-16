@@ -19,28 +19,26 @@ const AGENT_KEYWORDS: ReadonlyMap<string, AgentKind> = new Map([
 ]);
 
 const LEADING_MENTIONS_REGEX = /^(?:[ \t]*@[\w.-]+[ \t]*)+/;
-const AGENT_DIRECTIVE_REGEX = /\buse\s+(claude|codex|gemini)\b/i;
-const LEADING_AGENT_DIRECTIVE_CLEANUP_REGEX = /^[ \t]*use\s+(claude|codex|gemini)\b[ \t]*/i;
+const LEADING_AGENT_SELECTOR_REGEX = /^[ \t]*(claude|codex|gemini)\b[ \t]*/i;
 
-function stripRoutingSyntax(note: string): string {
-  return note
-    .replace(LEADING_MENTIONS_REGEX, "")
-    .replace(LEADING_AGENT_DIRECTIVE_CLEANUP_REGEX, "")
-    .replace(/^\r?\n/, "")
-    .replace(/[ \t\r\n]+$/, "");
+function normalizePrompt(note: string): string {
+  return note.replace(/^\r?\n/, "").replace(/[ \t\r\n]+$/, "");
 }
 
 export function parseAgentDirective(
   note: string,
   defaultAgent: AgentKind,
 ): { agent: AgentKind; prompt: string } {
-  const directiveMatch = note.match(AGENT_DIRECTIVE_REGEX);
-  if (directiveMatch !== null) {
-    const matchedAgent = directiveMatch[1]?.toLowerCase();
+  const withoutMentions = note.replace(LEADING_MENTIONS_REGEX, "");
+  const selectorMatch = withoutMentions.match(LEADING_AGENT_SELECTOR_REGEX);
+  if (selectorMatch !== null) {
+    const matchedAgent = selectorMatch[1]?.toLowerCase();
 
     for (const [keyword, agent] of AGENT_KEYWORDS) {
       if (matchedAgent === keyword) {
-        const strippedPrompt = stripRoutingSyntax(note);
+        const strippedPrompt = normalizePrompt(
+          withoutMentions.replace(LEADING_AGENT_SELECTOR_REGEX, ""),
+        );
         return {
           agent,
           prompt: strippedPrompt.length > 0 ? strippedPrompt : note.trim(),
@@ -49,7 +47,7 @@ export function parseAgentDirective(
     }
   }
 
-  const strippedPrompt = stripRoutingSyntax(note);
+  const strippedPrompt = normalizePrompt(withoutMentions);
   return {
     agent: defaultAgent,
     prompt: strippedPrompt.length > 0 ? strippedPrompt : note.trim(),
