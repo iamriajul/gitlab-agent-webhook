@@ -89,4 +89,12 @@ describe("parseAgentDirective", () => {
     expect(result.agent).toBe("claude");
     expect(result.prompt).toBe("    print('x')");
   });
+
+  it("does not strip mid-sentence directive text from the prompt", () => {
+    const note = "@review-bot please use codex to fix this";
+    const result = parseAgentDirective(note, "claude");
+
+    expect(result.agent).toBe("codex");
+    expect(result.prompt).toBe("please use codex to fix this");
+  });
 });
