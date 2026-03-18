@@ -38,7 +38,7 @@ const noteOnIssuePayload = {
   },
   object_attributes: {
     id: 100,
-    note: "@bot fix this bug",
+    note: "@review-bot fix this bug",
     noteable_type: "Issue",
     noteable_id: 42,
     action: "create",
@@ -159,6 +159,29 @@ describe("createApp", () => {
       status: "accepted",
       jobId: null,
       requestId: "req-123",
+    });
+  });
+
+  it("returns ignored when a supported note does not mention the bot", async () => {
+    const app = createApp(config, logger);
+
+    const response = await app.request("/webhook", {
+      method: "POST",
+      headers: createHeaders({ "x-request-id": "no-mention" }),
+      body: JSON.stringify({
+        ...noteOnIssuePayload,
+        object_attributes: {
+          ...noteOnIssuePayload.object_attributes,
+          note: "@alice please handle this",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      status: "ignored",
+      reason: "Bot was not mentioned in issue note",
+      requestId: "no-mention",
     });
   });
 

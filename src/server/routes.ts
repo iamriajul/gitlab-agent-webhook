@@ -114,7 +114,14 @@ export function createApp(
     }
     deliveryStore.set(deliveryKey, now());
 
-    const routeResult = routeEvent(parseResult.value, requestLogger);
+    const routeResult = routeEvent(
+      parseResult.value,
+      {
+        botUsername: config.botUsername,
+        defaultAgent: config.defaultAgent,
+      },
+      requestLogger,
+    );
     if (routeResult.isErr()) {
       deliveryStore.delete(deliveryKey);
       requestLogger.error({ error: routeResult.error }, "Failed to route event");
@@ -128,9 +135,19 @@ export function createApp(
       );
     }
 
-    const jobIdValue = routeResult.value;
+    if (routeResult.value.kind === "ignore") {
+      requestLogger.info(
+        { reason: routeResult.value.reason },
+        "Webhook event ignored during routing",
+      );
+      return jsonResponse(requestId, 202, {
+        status: "ignored",
+        reason: routeResult.value.reason,
+      });
+    }
+
     return Response.json(
-      { status: "accepted", jobId: jobIdValue, requestId },
+      { status: "accepted", jobId: null, requestId },
       { status: 202, headers: { "x-request-id": requestId } },
     );
   });
