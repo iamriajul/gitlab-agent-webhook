@@ -29,3 +29,22 @@ export interface AgentProcess {
   readonly result: Promise<Result<AgentResult, AppError>>;
   readonly kill: () => void;
 }
+
+export interface AgentCommand {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+}
+
+export interface SpawnedAgentHandle {
+  readonly pid: number;
+  readonly exited: Promise<number>;
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly stderr: ReadableStream<Uint8Array>;
+  kill(): void;
+}
+
+export interface AgentAdapter {
+  buildCommand(config: AgentConfig): AgentCommand;
+  parseSessionId(output: string): string | null;
+}
