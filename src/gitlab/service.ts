@@ -37,13 +37,15 @@ function toGitlabError(error: unknown): AppError {
 export class GitLabService {
   private readonly api: InstanceType<typeof Gitlab>;
   private readonly logger: Logger;
+  private readonly botUsername: string;
 
-  constructor(token: string, host: string, logger: Logger) {
+  constructor(token: string, host: string, logger: Logger, botUsername: string) {
     this.api = new Gitlab({ host, token });
     this.logger = logger;
+    this.botUsername = botUsername;
   }
 
-  addReaction(target: ReactionTarget, emoji: EmojiName): ResultAsync<void, AppError> {
+  addReaction(target: ReactionTarget, emoji: EmojiName): ResultAsync<number, AppError> {
     this.logger.debug({ target, emoji }, "Adding reaction");
     switch (target.kind) {
       case "issue_note":
@@ -55,7 +57,7 @@ export class GitLabService {
             emoji,
           ),
           toGitlabError,
-        ).map(() => undefined);
+        ).andThen(extractAwardId);
       case "mr_note":
         return fromPromise(
           this.api.MergeRequestNoteAwardEmojis.award(
@@ -65,13 +67,44 @@ export class GitLabService {
             emoji,
           ),
           toGitlabError,
-        ).map(() => undefined);
+        ).andThen(extractAwardId);
       case "mr":
         return fromPromise(
           this.api.MergeRequestAwardEmojis.award(target.project, target.mrIid, emoji),
           toGitlabError,
-        ).map(() => undefined);
+        ).andThen(extractAwardId);
     }
+  }
+
+  clearReaction(target: ReactionTarget, emoji: EmojiName): ResultAsync<void, AppError> {
+    this.logger.debug({ target, emoji }, "Clearing reaction");
+    return fromPromise(
+      (async () => {
+        const reactions = await this.listReactions(target);
+
+        for (const reaction of reactions) {
+          const reactionName =
+            typeof reaction === "object" && reaction !== null ? Reflect.get(reaction, "name") : null;
+          const reactionId =
+            typeof reaction === "object" && reaction !== null ? Reflect.get(reaction, "id") : null;
+          const reactionUser =
+            typeof reaction === "object" && reaction !== null ? Reflect.get(reaction, "user") : null;
+          const reactionUsername =
+            typeof reactionUser === "object" && reactionUser !== null
+              ? Reflect.get(reactionUser, "username")
+              : null;
+
+          if (
+            reactionName === emoji &&
+            typeof reactionId === "number" &&
+            reactionUsername === this.botUsername
+          ) {
+            await this.removeReactionRaw(target, reactionId);
+          }
+        }
+      })(),
+      toGitlabError,
+    ).map(() => undefined);
   }
 
   removeReaction(
@@ -80,32 +113,22 @@ export class GitLabService {
     awardId: number,
   ): ResultAsync<void, AppError> {
     this.logger.debug({ target, emoji, awardId }, "Removing reaction");
+    return fromPromise(this.removeReactionRaw(target, awardId), toGitlabError).map(() => undefined);
+  }
+
+  private removeReactionRaw(target: ReactionTarget, awardId: number): Promise<unknown> {
     switch (target.kind) {
       case "issue_note":
-        return fromPromise(
-          this.api.IssueNoteAwardEmojis.remove(
-            target.project,
-            target.issueIid,
-            target.noteId,
-            awardId,
-          ),
-          toGitlabError,
-        ).map(() => undefined);
+        return this.api.IssueNoteAwardEmojis.remove(target.project, target.issueIid, target.noteId, awardId);
       case "mr_note":
-        return fromPromise(
-          this.api.MergeRequestNoteAwardEmojis.remove(
-            target.project,
-            target.mrIid,
-            target.noteId,
-            awardId,
-          ),
-          toGitlabError,
-        ).map(() => undefined);
+        return this.api.MergeRequestNoteAwardEmojis.remove(
+          target.project,
+          target.mrIid,
+          target.noteId,
+          awardId,
+        );
       case "mr":
-        return fromPromise(
-          this.api.MergeRequestAwardEmojis.remove(target.project, target.mrIid, awardId),
-          toGitlabError,
-        ).map(() => undefined);
+        return this.api.MergeRequestAwardEmojis.remove(target.project, target.mrIid, awardId);
     }
   }
 
@@ -122,4 +145,47 @@ export class GitLabService {
       () => undefined,
     );
   }
+
+  private listReactions(target: ReactionTarget): Promise<readonly unknown[]> {
+    switch (target.kind) {
+      case "issue_note":
+        return callListMethod(this.api.IssueNoteAwardEmojis, [
+          target.project,
+          target.issueIid,
+          target.noteId,
+        ]);
+      case "mr_note":
+        return callListMethod(this.api.MergeRequestNoteAwardEmojis, [
+          target.project,
+          target.mrIid,
+          target.noteId,
+        ]);
+      case "mr":
+        return callListMethod(this.api.MergeRequestAwardEmojis, [target.project, target.mrIid]);
+    }
+  }
+}
+
+function extractAwardId(value: unknown): ResultAsync<number, AppError> {
+  const awardId = typeof value === "object" && value !== null ? Reflect.get(value, "id") : null;
+  if (typeof awardId !== "number") {
+    return fromPromise(Promise.reject(new Error("Missing reaction award id")), toGitlabError);
+  }
+
+  return fromPromise(Promise.resolve(awardId), toGitlabError);
+}
+
+function callListMethod(service: object, args: readonly unknown[]): Promise<readonly unknown[]> {
+  const allMethod = Reflect.get(service, "all");
+  if (typeof allMethod !== "function") {
+    return Promise.reject(new Error("Reaction listing is unavailable"));
+  }
+
+  return Promise.resolve(Reflect.apply(allMethod, service, [...args])).then((value) => {
+    if (!Array.isArray(value)) {
+      throw new Error("Reaction listing returned a non-array response");
+    }
+
+    return value;
+  });
 }

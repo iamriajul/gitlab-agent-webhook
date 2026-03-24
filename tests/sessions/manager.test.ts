@@ -132,4 +132,54 @@ describe("createSessionManager", () => {
 
     expect(lookupResult.value).toBeNull();
   });
+
+  it("returns the most recent active session for a context", () => {
+    const database = createMigratedDatabase(databasePath);
+    const manager = createSessionManager(database);
+
+    const activeResult = manager.create({
+      agentType: "claude",
+      agentSessionId: "claude-active",
+      context: { kind: "mr", project: "team/project", mrIid: 50 },
+    });
+    expect(activeResult.isOk()).toBe(true);
+    if (activeResult.isErr()) {
+      return;
+    }
+
+    const failedResult = manager.create({
+      agentType: "claude",
+      agentSessionId: "claude-failed",
+      context: { kind: "mr", project: "team/project", mrIid: 50 },
+    });
+    expect(failedResult.isOk()).toBe(true);
+    if (failedResult.isErr()) {
+      return;
+    }
+
+    const markFailedResult = manager.markFinalStatus(failedResult.value.id, "failed");
+    expect(markFailedResult.isOk()).toBe(true);
+    if (markFailedResult.isErr()) {
+      return;
+    }
+
+    const lookupResult = manager.findByContext({
+      kind: "mr",
+      project: "team/project",
+      mrIid: 50,
+    });
+
+    expect(lookupResult.isOk()).toBe(true);
+    if (lookupResult.isErr()) {
+      return;
+    }
+
+    expect(lookupResult.value).not.toBeNull();
+    if (lookupResult.value === null) {
+      return;
+    }
+
+    expect(lookupResult.value.id).toBe(activeResult.value.id);
+    expect(lookupResult.value.status).toBe("active");
+  });
 });
