@@ -27,7 +27,7 @@ export interface AgentResult {
 export interface AgentProcess {
   readonly pid: number;
   readonly result: Promise<Result<AgentResult, AppError>>;
-  readonly kill: () => void;
+  readonly kill: () => void | Promise<void>;
 }
 
 export interface AgentCommand {

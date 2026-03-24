@@ -42,6 +42,8 @@ export interface EnqueueJobInput {
 
 export interface JobQueue {
   enqueue(input: EnqueueJobInput): Result<Job, ReturnType<typeof queueError>>;
+  listPending(): Result<readonly Job[], ReturnType<typeof queueError>>;
+  claimPending(id: JobId): Result<Job | null, ReturnType<typeof queueError>>;
   claimNext(): Result<Job | null, ReturnType<typeof queueError>>;
   complete(id: JobId): Result<Job, ReturnType<typeof queueError>>;
   fail(id: JobId, message: string): Result<Job, ReturnType<typeof queueError>>;
@@ -183,6 +185,69 @@ export function createJobQueue(database: AppDatabase): JobQueue {
           return tx.select().from(jobs).where(eq(jobs.id, id)).get();
         }),
       ).andThen((row) => requireJob(row, jobId("pending-enqueue")).andThen(mapJob));
+    },
+
+    listPending() {
+      return runDatabaseOperation(() =>
+        database
+          .select()
+          .from(jobs)
+          .where(eq(jobs.status, "pending"))
+          .orderBy(asc(jobs.createdAt), asc(jobs.id))
+          .all(),
+      ).andThen((rows) => {
+        const pendingJobs: Job[] = [];
+
+        for (const row of rows) {
+          const jobResult = mapJob(row);
+          if (jobResult.isErr()) {
+            return err(jobResult.error);
+          }
+
+          pendingJobs.push(jobResult.value);
+        }
+
+        return ok(pendingJobs);
+      });
+    },
+
+    claimPending(id) {
+      return runDatabaseOperation(() =>
+        database.transaction((tx) => {
+          const pendingJob = tx
+            .select()
+            .from(jobs)
+            .where(and(eq(jobs.id, id), eq(jobs.status, "pending")))
+            .get();
+
+          if (pendingJob === undefined) {
+            return null;
+          }
+
+          const startedAt = nextTimestamp();
+          const updateResult = tx
+            .update(jobs)
+            .set({
+              status: "processing",
+              startedAt,
+              completedAt: null,
+              error: null,
+            })
+            .where(and(eq(jobs.id, pendingJob.id), eq(jobs.status, "pending")))
+            .run();
+          if (updateResult.changes === 0) {
+            return null;
+          }
+
+          return tx.select().from(jobs).where(eq(jobs.id, pendingJob.id)).get() ?? null;
+        }),
+      ).andThen((row) => {
+        if (row === null) {
+          return ok(null);
+        }
+
+        return mapJob(row);
+      });
     },
 
     claimNext() {

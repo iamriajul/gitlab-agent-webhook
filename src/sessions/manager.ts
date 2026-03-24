@@ -53,6 +53,7 @@ export interface SessionManager {
   create(input: CreateSessionInput): Result<AgentSession, ReturnType<typeof sessionError>>;
   findByContext(
     context: SessionContext,
+    agentType?: AgentKind,
   ): Result<AgentSession | null, ReturnType<typeof sessionError>>;
   updateActivity(
     id: SessionId,
@@ -178,18 +179,24 @@ export function createSessionManager(database: AppDatabase): SessionManager {
       }).andThen((row) => requireSession(row, sessionId("pending-session")).andThen(mapSession));
     },
 
-    findByContext(context) {
+    findByContext(context, agentType) {
+      const baseCondition = and(
+        eq(sessions.contextKind, context.kind),
+        eq(sessions.contextProject, context.project),
+        eq(sessions.contextIid, contextIid(context)),
+        eq(sessions.status, "active"),
+      );
+
+      const whereCondition =
+        agentType === undefined
+          ? baseCondition
+          : and(baseCondition, eq(sessions.agentType, agentType));
+
       return runDatabaseOperation(() =>
         database
           .select()
           .from(sessions)
-          .where(
-            and(
-              eq(sessions.contextKind, context.kind),
-              eq(sessions.contextProject, context.project),
-              eq(sessions.contextIid, contextIid(context)),
-            ),
-          )
+          .where(whereCondition)
           .orderBy(desc(sessions.lastActivityAt), desc(sessions.createdAt))
           .get(),
       ).andThen((row) => {
