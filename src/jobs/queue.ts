@@ -43,6 +43,7 @@ export interface EnqueueJobInput {
 export interface JobQueue {
   enqueue(input: EnqueueJobInput): Result<Job, ReturnType<typeof queueError>>;
   listPending(): Result<readonly Job[], ReturnType<typeof queueError>>;
+  requeueProcessing(): Result<number, ReturnType<typeof queueError>>;
   claimPending(id: JobId): Result<Job | null, ReturnType<typeof queueError>>;
   claimNext(): Result<Job | null, ReturnType<typeof queueError>>;
   complete(id: JobId): Result<Job, ReturnType<typeof queueError>>;
@@ -162,7 +163,28 @@ export function createJobQueue(database: AppDatabase): JobQueue {
             .get();
 
           if (existingJob !== undefined) {
-            return existingJob;
+            if (existingJob.status === "pending" || existingJob.status === "processing") {
+              return existingJob;
+            }
+
+            if (existingJob.status === "completed") {
+              return existingJob;
+            }
+
+            const createdAt = nextTimestamp();
+            tx.update(jobs)
+              .set({
+                payload: JSON.stringify(input.payload),
+                status: "pending",
+                createdAt,
+                startedAt: null,
+                completedAt: null,
+                error: null,
+              })
+              .where(eq(jobs.id, existingJob.id))
+              .run();
+
+            return tx.select().from(jobs).where(eq(jobs.id, existingJob.id)).get();
           }
 
           const createdAt = nextTimestamp();
@@ -211,6 +233,34 @@ export function createJobQueue(database: AppDatabase): JobQueue {
       });
     },
 
+    requeueProcessing() {
+      return runDatabaseOperation(() =>
+        database.transaction((tx) => {
+          const interruptedJobs = tx
+            .select({ id: jobs.id })
+            .from(jobs)
+            .where(eq(jobs.status, "processing"))
+            .all();
+
+          if (interruptedJobs.length === 0) {
+            return 0;
+          }
+
+          tx.update(jobs)
+            .set({
+              status: "pending",
+              startedAt: null,
+              completedAt: null,
+              error: null,
+            })
+            .where(eq(jobs.status, "processing"))
+            .run();
+
+          return interruptedJobs.length;
+        }),
+      );
+    },
+
     claimPending(id) {
       return runDatabaseOperation(() =>
         database.transaction((tx) => {
@@ -225,8 +275,7 @@ export function createJobQueue(database: AppDatabase): JobQueue {
           }
 
           const startedAt = nextTimestamp();
-          const updateResult = tx
-            .update(jobs)
+          tx.update(jobs)
             .set({
               status: "processing",
               startedAt,
@@ -235,11 +284,20 @@ export function createJobQueue(database: AppDatabase): JobQueue {
             })
             .where(and(eq(jobs.id, pendingJob.id), eq(jobs.status, "pending")))
             .run();
-          if (updateResult.changes === 0) {
-            return null;
-          }
 
-          return tx.select().from(jobs).where(eq(jobs.id, pendingJob.id)).get() ?? null;
+          return (
+            tx
+              .select()
+              .from(jobs)
+              .where(
+                and(
+                  eq(jobs.id, pendingJob.id),
+                  eq(jobs.status, "processing"),
+                  eq(jobs.startedAt, startedAt),
+                ),
+              )
+              .get() ?? null
+          );
         }),
       ).andThen((row) => {
         if (row === null) {

@@ -29,16 +29,14 @@ describe("GitLabService", () => {
     });
 
     let succeeded = false;
-    await service
-      .clearReaction({ kind: "mr", project: "team/project", mrIid: 7 }, "eyes")
-      .match(
-        () => {
-          succeeded = true;
-        },
-        () => {
-          succeeded = false;
-        },
-      );
+    await service.clearReaction({ kind: "mr", project: "team/project", mrIid: 7 }, "eyes").match(
+      () => {
+        succeeded = true;
+      },
+      () => {
+        succeeded = false;
+      },
+    );
 
     expect(succeeded).toBe(true);
     expect(removeCalls).toEqual([["team/project", 7, 3]]);

@@ -7,8 +7,7 @@ function geminiPath(config: AgentConfig): string {
 export function buildGeminiCommand(config: AgentConfig): AgentCommand {
   const systemPromptSelector = config.env["GEMINI_SYSTEM_MD"] ?? process.env["GEMINI_SYSTEM_MD"];
   const mergedPrompt = `${config.systemPrompt}\n\n${config.prompt}`;
-  const env =
-    systemPromptSelector === undefined ? {} : { GEMINI_SYSTEM_MD: systemPromptSelector };
+  const env = systemPromptSelector === undefined ? {} : { GEMINI_SYSTEM_MD: systemPromptSelector };
 
   return {
     command: geminiPath(config),

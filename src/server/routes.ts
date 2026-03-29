@@ -3,7 +3,11 @@ import type { Config } from "../config/config.ts";
 import { WEBHOOK_HEADER_EVENT, WEBHOOK_HEADER_IDEMPOTENCY } from "../config/constants.ts";
 import type { Logger } from "../config/logger.ts";
 import { parseWebhookPayload } from "../events/parser.ts";
-import { routeEvent } from "../events/router.ts";
+import { type RoutingDecision, routeEvent } from "../events/router.ts";
+import type { EnqueueJobInput } from "../jobs/queue.ts";
+import type { Job } from "../jobs/types.ts";
+import type { AppError } from "../types/errors.ts";
+import type { Result } from "../types/result.ts";
 import { authMiddleware, requestIdMiddleware } from "./middleware.ts";
 
 type DeliveryStore = Map<string, number>;
@@ -12,6 +16,10 @@ type AppOptions = {
   readonly dedupeTtlMs?: number;
   readonly now?: () => number;
 };
+
+export interface AppDependencies {
+  readonly enqueueJob?: (input: EnqueueJobInput) => Result<Job, AppError>;
+}
 
 const DEFAULT_DEDUPE_TTL_MS = 60 * 60 * 1000;
 
@@ -46,11 +54,53 @@ function pruneExpiredDeliveries(
   }
 }
 
+function errorResponse(requestId: string, statusCode: number, message: string): Response {
+  return Response.json(
+    {
+      status: "error",
+      error: { code: "internal_error", message },
+      requestId,
+    },
+    { status: statusCode, headers: { "x-request-id": requestId } },
+  );
+}
+
+function enqueueRoutedJob(
+  requestId: string,
+  routeResult: Extract<RoutingDecision, { readonly kind: "enqueue" }>,
+  deliveryKey: string,
+  deliveryStore: DeliveryStore,
+  requestLogger: Logger,
+  dependencies: AppDependencies,
+): Response {
+  if (dependencies.enqueueJob === undefined) {
+    deliveryStore.delete(deliveryKey);
+    requestLogger.error("Webhook route is missing an enqueue dependency");
+    return errorResponse(requestId, 500, "Webhook route is not configured to enqueue jobs");
+  }
+
+  const enqueueResult = dependencies.enqueueJob({
+    payload: routeResult.payload,
+    idempotencyKey: routeResult.idempotencyKey,
+  });
+  if (enqueueResult.isErr()) {
+    deliveryStore.delete(deliveryKey);
+    requestLogger.error({ error: enqueueResult.error }, "Failed to enqueue webhook job");
+    return errorResponse(requestId, 500, enqueueResult.error.message);
+  }
+
+  return Response.json(
+    { status: "accepted", jobId: enqueueResult.value.id, requestId },
+    { status: 202, headers: { "x-request-id": requestId } },
+  );
+}
+
 export function createApp(
   config: Config,
   logger: Logger,
   deliveryStore: DeliveryStore = new Map(),
   options: AppOptions = {},
+  dependencies: AppDependencies = {},
 ): Hono {
   const dedupeTtlMs = options.dedupeTtlMs ?? DEFAULT_DEDUPE_TTL_MS;
   const now = options.now ?? Date.now;
@@ -146,9 +196,13 @@ export function createApp(
       });
     }
 
-    return Response.json(
-      { status: "accepted", jobId: null, requestId },
-      { status: 202, headers: { "x-request-id": requestId } },
+    return enqueueRoutedJob(
+      requestId,
+      routeResult.value,
+      deliveryKey,
+      deliveryStore,
+      requestLogger,
+      dependencies,
     );
   });
 
