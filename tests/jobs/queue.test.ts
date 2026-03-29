@@ -106,6 +106,52 @@ describe("createJobQueue", () => {
     expect(claimResult.value.id).toBe(firstResult.value.id);
   });
 
+  it("returns the existing completed job for a duplicate idempotency key", () => {
+    const database = createMigratedDatabase(databasePath);
+    const queue = createJobQueue(database);
+
+    const firstResult = queue.enqueue({
+      payload: { kind: "review_mr", project: "team/project", mrIid: 201 },
+      idempotencyKey: "mr:201",
+    });
+    expect(firstResult.isOk()).toBe(true);
+    if (firstResult.isErr()) {
+      return;
+    }
+
+    const claimResult = queue.claimNext();
+    expect(claimResult.isOk()).toBe(true);
+    if (claimResult.isErr() || claimResult.value === null) {
+      return;
+    }
+
+    const completeResult = queue.complete(claimResult.value.id);
+    expect(completeResult.isOk()).toBe(true);
+    if (completeResult.isErr()) {
+      return;
+    }
+
+    const secondResult = queue.enqueue({
+      payload: { kind: "review_mr", project: "team/project", mrIid: 201 },
+      idempotencyKey: "mr:201",
+    });
+    expect(secondResult.isOk()).toBe(true);
+    if (secondResult.isErr()) {
+      return;
+    }
+
+    expect(secondResult.value.id).toBe(firstResult.value.id);
+    expect(secondResult.value.status).toBe("completed");
+
+    const pendingJobsResult = queue.listPending();
+    expect(pendingJobsResult.isOk()).toBe(true);
+    if (pendingJobsResult.isErr()) {
+      return;
+    }
+
+    expect(pendingJobsResult.value).toHaveLength(0);
+  });
+
   it("claims the oldest pending job and marks it as processing", () => {
     const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
@@ -199,6 +245,72 @@ describe("createJobQueue", () => {
     expect(failResult.value.error).toBe("agent exited");
     expect(failResult.value.retryCount).toBe(1);
     expect(failResult.value.completedAt instanceof Date).toBe(true);
+  });
+
+  it("requeues processing jobs so interrupted work can be retried after restart", () => {
+    const database = createMigratedDatabase(databasePath);
+    const queue = createJobQueue(database);
+
+    queue.enqueue({
+      payload: { kind: "review_mr", project: "team/project", mrIid: 77 },
+      idempotencyKey: "mr:77",
+    });
+
+    const claimResult = queue.claimNext();
+    expect(claimResult.isOk()).toBe(true);
+    if (claimResult.isErr() || claimResult.value === null) {
+      return;
+    }
+
+    const recoveryResult = queue.requeueProcessing();
+    expect(recoveryResult.isOk()).toBe(true);
+    if (recoveryResult.isErr()) {
+      return;
+    }
+
+    expect(recoveryResult.value).toBe(1);
+
+    const recoveredJobResult = queue.findByIdempotencyKey("mr:77");
+    expect(recoveredJobResult.isOk()).toBe(true);
+    if (recoveredJobResult.isErr()) {
+      return;
+    }
+
+    expect(recoveredJobResult.value).not.toBeNull();
+    if (recoveredJobResult.value === null) {
+      return;
+    }
+
+    expect(recoveredJobResult.value.status).toBe("pending");
+    expect(recoveredJobResult.value.startedAt).toBeNull();
+    expect(recoveredJobResult.value.completedAt).toBeNull();
+    expect(recoveredJobResult.value.error).toBeNull();
+  });
+
+  it("does not requeue jobs that are not currently processing", () => {
+    const database = createMigratedDatabase(databasePath);
+    const queue = createJobQueue(database);
+
+    queue.enqueue({
+      payload: { kind: "review_mr", project: "team/project", mrIid: 78 },
+      idempotencyKey: "mr:78",
+    });
+
+    const recoveryResult = queue.requeueProcessing();
+    expect(recoveryResult.isOk()).toBe(true);
+    if (recoveryResult.isErr()) {
+      return;
+    }
+
+    expect(recoveryResult.value).toBe(0);
+
+    const jobResult = queue.findByIdempotencyKey("mr:78");
+    expect(jobResult.isOk()).toBe(true);
+    if (jobResult.isErr() || jobResult.value === null) {
+      return;
+    }
+
+    expect(jobResult.value.status).toBe("pending");
   });
 
   it("returns null when there are no pending jobs to claim", () => {

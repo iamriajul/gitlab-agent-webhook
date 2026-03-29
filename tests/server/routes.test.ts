@@ -7,7 +7,11 @@ import {
   WEBHOOK_HEADER_TOKEN,
   WEBHOOK_HEADER_UUID,
 } from "../../src/config/constants.ts";
+import type { EnqueueJobInput } from "../../src/jobs/queue.ts";
+import type { Job } from "../../src/jobs/types.ts";
 import { createApp } from "../../src/server/routes.ts";
+import { jobId } from "../../src/types/branded.ts";
+import { ok } from "../../src/types/result.ts";
 
 const config: Config = {
   gitlabWebhookSecret: "top-secret",
@@ -56,6 +60,31 @@ function createHeaders(overrides?: Record<string, string>): Record<string, strin
     [WEBHOOK_HEADER_UUID]: "req-123",
     [WEBHOOK_HEADER_IDEMPOTENCY]: "delivery-123",
     ...overrides,
+  };
+}
+
+function createQueueDependencies() {
+  let nextQueuedJob = 1;
+
+  return {
+    enqueueJob(input: EnqueueJobInput) {
+      const jobNumber = nextQueuedJob;
+      nextQueuedJob += 1;
+
+      const job: Job = {
+        id: jobId(`job-${jobNumber}`),
+        payload: input.payload,
+        status: "pending",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        startedAt: null,
+        completedAt: null,
+        error: null,
+        idempotencyKey: input.idempotencyKey,
+        retryCount: 0,
+      };
+
+      return ok(job);
+    },
   };
 }
 
@@ -146,7 +175,7 @@ describe("createApp", () => {
   });
 
   it("accepts valid webhook events", async () => {
-    const app = createApp(config, logger);
+    const app = createApp(config, logger, new Map(), {}, createQueueDependencies());
 
     const response = await app.request("/webhook", {
       method: "POST",
@@ -157,7 +186,7 @@ describe("createApp", () => {
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({
       status: "accepted",
-      jobId: null,
+      jobId: "job-1",
       requestId: "req-123",
     });
   });
@@ -186,7 +215,7 @@ describe("createApp", () => {
   });
 
   it("deduplicates repeated deliveries", async () => {
-    const app = createApp(config, logger);
+    const app = createApp(config, logger, new Map(), {}, createQueueDependencies());
 
     const firstResponse = await app.request("/webhook", {
       method: "POST",
@@ -208,7 +237,7 @@ describe("createApp", () => {
   });
 
   it("deduplicates by webhook UUID when idempotency key is missing", async () => {
-    const app = createApp(config, logger);
+    const app = createApp(config, logger, new Map(), {}, createQueueDependencies());
 
     const firstResponse = await app.request("/webhook", {
       method: "POST",
@@ -239,10 +268,16 @@ describe("createApp", () => {
 
   it("expires old delivery keys after the dedupe window", async () => {
     let now = 10_000;
-    const app = createApp(config, logger, new Map(), {
-      dedupeTtlMs: 1_000,
-      now: () => now,
-    });
+    const app = createApp(
+      config,
+      logger,
+      new Map(),
+      {
+        dedupeTtlMs: 1_000,
+        now: () => now,
+      },
+      createQueueDependencies(),
+    );
 
     const firstResponse = await app.request("/webhook", {
       method: "POST",
@@ -263,7 +298,7 @@ describe("createApp", () => {
     expect(secondResponse.status).toBe(202);
     expect(await secondResponse.json()).toEqual({
       status: "accepted",
-      jobId: null,
+      jobId: "job-2",
       requestId: "after-ttl",
     });
   });

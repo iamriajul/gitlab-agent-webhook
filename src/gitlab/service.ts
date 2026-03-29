@@ -29,6 +29,12 @@ export type ReactionTarget =
     }
   | { readonly kind: "mr"; readonly project: string; readonly mrIid: number };
 
+interface ReactionMetadata {
+  readonly id: number;
+  readonly name: unknown;
+  readonly username: unknown;
+}
+
 function toGitlabError(error: unknown): AppError {
   const e = error as Error;
   return gitlabError(e.message);
@@ -83,23 +89,13 @@ export class GitLabService {
         const reactions = await this.listReactions(target);
 
         for (const reaction of reactions) {
-          const reactionName =
-            typeof reaction === "object" && reaction !== null ? Reflect.get(reaction, "name") : null;
-          const reactionId =
-            typeof reaction === "object" && reaction !== null ? Reflect.get(reaction, "id") : null;
-          const reactionUser =
-            typeof reaction === "object" && reaction !== null ? Reflect.get(reaction, "user") : null;
-          const reactionUsername =
-            typeof reactionUser === "object" && reactionUser !== null
-              ? Reflect.get(reactionUser, "username")
-              : null;
+          const reactionMetadata = readReactionMetadata(reaction);
+          if (reactionMetadata === null) {
+            continue;
+          }
 
-          if (
-            reactionName === emoji &&
-            typeof reactionId === "number" &&
-            reactionUsername === this.botUsername
-          ) {
-            await this.removeReactionRaw(target, reactionId);
+          if (isOwnedReaction(reactionMetadata, emoji, this.botUsername)) {
+            await this.removeReactionRaw(target, reactionMetadata.id);
           }
         }
       })(),
@@ -119,7 +115,12 @@ export class GitLabService {
   private removeReactionRaw(target: ReactionTarget, awardId: number): Promise<unknown> {
     switch (target.kind) {
       case "issue_note":
-        return this.api.IssueNoteAwardEmojis.remove(target.project, target.issueIid, target.noteId, awardId);
+        return this.api.IssueNoteAwardEmojis.remove(
+          target.project,
+          target.issueIid,
+          target.noteId,
+          awardId,
+        );
       case "mr_note":
         return this.api.MergeRequestNoteAwardEmojis.remove(
           target.project,
@@ -164,6 +165,31 @@ export class GitLabService {
         return callListMethod(this.api.MergeRequestAwardEmojis, [target.project, target.mrIid]);
     }
   }
+}
+
+function readReactionMetadata(reaction: unknown): ReactionMetadata | null {
+  if (typeof reaction !== "object" || reaction === null) {
+    return null;
+  }
+
+  const id = Reflect.get(reaction, "id");
+  const name = Reflect.get(reaction, "name");
+  const user = Reflect.get(reaction, "user");
+  const username = typeof user === "object" && user !== null ? Reflect.get(user, "username") : null;
+
+  if (typeof id !== "number") {
+    return null;
+  }
+
+  return { id, name, username };
+}
+
+function isOwnedReaction(
+  reaction: ReactionMetadata,
+  emoji: EmojiName,
+  botUsername: string,
+): boolean {
+  return reaction.name === emoji && reaction.username === botUsername;
 }
 
 function extractAwardId(value: unknown): ResultAsync<number, AppError> {

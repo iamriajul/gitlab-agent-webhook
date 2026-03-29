@@ -2,20 +2,27 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentConfig, AgentProcess, AgentResult } from "../../src/agents/types.ts";
 import { createLogger } from "../../src/config/logger.ts";
 import type { ReactionTarget } from "../../src/gitlab/service.ts";
-import { createJobQueue } from "../../src/jobs/queue.ts";
-import { createWorker } from "../../src/jobs/worker.ts";
 import type { JobQueue } from "../../src/jobs/queue.ts";
+import { createJobQueue } from "../../src/jobs/queue.ts";
 import type { Job } from "../../src/jobs/types.ts";
-import { createSessionManager } from "../../src/sessions/manager.ts";
+import { createWorker } from "../../src/jobs/worker.ts";
 import type { SessionManager } from "../../src/sessions/manager.ts";
-import { agentError, gitlabError, queueError } from "../../src/types/errors.ts";
+import { createSessionManager } from "../../src/sessions/manager.ts";
 import { jobId } from "../../src/types/branded.ts";
-import { err, fromPromise, ok, okAsync, type Result, type ResultAsync } from "../../src/types/result.ts";
-import type { AgentConfig, AgentProcess, AgentResult } from "../../src/agents/types.ts";
 import type { AppError } from "../../src/types/errors.ts";
+import { agentError, gitlabError, queueError } from "../../src/types/errors.ts";
 import type { EmojiName } from "../../src/types/events.ts";
+import {
+  err,
+  fromPromise,
+  ok,
+  okAsync,
+  type Result,
+  type ResultAsync,
+} from "../../src/types/result.ts";
 import { createMigratedDatabase } from "../helpers/database.ts";
 
 let databasePath = "";
@@ -76,7 +83,11 @@ class FakeGitLabService {
     return okAsync(undefined);
   }
 
-  removeReaction(target: ReactionTarget, emoji: EmojiName, awardId: number): ResultAsync<void, AppError> {
+  removeReaction(
+    target: ReactionTarget,
+    emoji: EmojiName,
+    awardId: number,
+  ): ResultAsync<void, AppError> {
     this.calls.push({ kind: "remove_reaction", target, emoji, awardId });
     return okAsync(undefined);
   }
@@ -117,6 +128,22 @@ function createDeferred<T>() {
       rejectPromise(reason);
     },
   };
+}
+
+async function waitForCondition(
+  condition: () => boolean,
+  message: string,
+  maxTicks = 20,
+): Promise<void> {
+  for (let tick = 0; tick < maxTicks; tick += 1) {
+    if (condition()) {
+      return;
+    }
+
+    await Promise.resolve();
+  }
+
+  throw new Error(message);
 }
 
 function prepareWorkspace(
@@ -194,7 +221,7 @@ describe("createWorker", () => {
     expect(spawnedConfigs).toHaveLength(1);
     expect(spawnedConfigs[0]?.agent.kind).toBe("codex");
     expect(spawnedConfigs[0]?.workDir).toBe(join(process.cwd(), "prepared", "issue-55"));
-    expect(spawnedConfigs[0]?.env).toEqual(TEST_AGENT_ENV);
+    expect(spawnedConfigs[0]?.env).toMatchObject(TEST_AGENT_ENV);
     expect(spawnedConfigs[0]?.sessionId).toBeUndefined();
     expect(spawnedConfigs[0]?.prompt).toContain("Fix the flaky test");
     expect(spawnedConfigs[0]?.systemPrompt).not.toContain("Fix the flaky test");
@@ -383,9 +410,8 @@ describe("createWorker", () => {
         addReaction(_target, emoji) {
           addReactionCount += 1;
           if (emoji === "eyes" && addReactionCount === 1) {
-            return fromPromise(
-              Promise.reject(new Error("duplicate award emoji")),
-              () => gitlabError("duplicate award emoji"),
+            return fromPromise(Promise.reject(new Error("duplicate award emoji")), () =>
+              gitlabError("duplicate award emoji"),
             );
           }
 
@@ -432,6 +458,89 @@ describe("createWorker", () => {
 
     expect(runResult.value?.status).toBe("completed");
     expect(clearedReactions).toEqual(["eyes", "white_check_mark", "warning"]);
+    expect(addReactionCount).toBe(3);
+    expect(spawnedConfigs).toHaveLength(1);
+  });
+
+  it("recovers from a stale note acknowledgment reaction before spawning", async () => {
+    const database = createMigratedDatabase(databasePath);
+    const queue = createJobQueue(database);
+    const sessions = createSessionManager(database);
+    const spawnedConfigs: AgentConfig[] = [];
+    let addReactionCount = 0;
+    const clearedReactions: EmojiName[] = [];
+
+    const enqueueResult = queue.enqueue({
+      payload: {
+        kind: "handle_mention",
+        project: "team/project",
+        noteId: 777,
+        issueIid: 89,
+        prompt: "Take a look",
+        agentType: "claude",
+      },
+      idempotencyKey: "note:777",
+    });
+    expect(enqueueResult.isOk()).toBe(true);
+    if (enqueueResult.isErr()) {
+      return;
+    }
+
+    const worker = createWorker({
+      queue,
+      sessions,
+      gitlab: {
+        addReaction(_target, emoji) {
+          addReactionCount += 1;
+          if (emoji === "eyes" && addReactionCount === 1) {
+            return fromPromise(Promise.reject(new Error("duplicate award emoji")), () =>
+              gitlabError("duplicate award emoji"),
+            );
+          }
+
+          return okAsync(addReactionCount);
+        },
+        clearReaction(_target, emoji) {
+          clearedReactions.push(emoji);
+          return okAsync(undefined);
+        },
+        removeReaction() {
+          return okAsync(undefined);
+        },
+        postIssueComment() {
+          return okAsync(undefined);
+        },
+        postMRComment() {
+          return okAsync(undefined);
+        },
+      },
+      logger: createLogger("fatal"),
+      defaultAgent: "codex",
+      workDir: process.cwd(),
+      timeoutMs: 60_000,
+      prepareWorkspace,
+      spawnAgent(config) {
+        spawnedConfigs.push(config);
+        return ok(
+          createAgentProcess({
+            exitCode: 0,
+            sessionId: "claude-note-777",
+            stdout: "ok",
+            stderr: "",
+            durationMs: 500,
+          }),
+        );
+      },
+    });
+
+    const runResult = await worker.runNextJob();
+    expect(runResult.isOk()).toBe(true);
+    if (runResult.isErr()) {
+      return;
+    }
+
+    expect(runResult.value?.status).toBe("completed");
+    expect(clearedReactions).toEqual(["eyes"]);
     expect(addReactionCount).toBe(3);
     expect(spawnedConfigs).toHaveLength(1);
   });
@@ -552,7 +661,8 @@ describe("createWorker", () => {
         spawnedConfigs.push(config);
         return ok({
           pid: 4242 + spawnedConfigs.length,
-          result: spawnedConfigs.length === 1 ? firstAgentResult.promise : secondAgentResult.promise,
+          result:
+            spawnedConfigs.length === 1 ? firstAgentResult.promise : secondAgentResult.promise,
           kill() {},
         });
       },
@@ -561,8 +671,10 @@ describe("createWorker", () => {
     const firstRunPromise = worker.runNextJob();
     const secondRunPromise = worker.runNextJob();
 
-    await Promise.resolve();
-    await Promise.resolve();
+    await waitForCondition(
+      () => spawnedConfigs.length === 2,
+      "Expected both concurrent MR review jobs to spawn",
+    );
     expect(spawnedConfigs).toHaveLength(2);
     expect(spawnedConfigs[0]?.prompt).toContain("Review merge request !92");
     expect(spawnedConfigs[1]?.prompt).toContain("Review merge request !93");
@@ -786,6 +898,7 @@ describe("createWorker", () => {
     });
   });
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this test intentionally exercises a long same-context concurrency flow end-to-end.
   it("leaves a blocked same-context follow-up pending until a later run can resume it", async () => {
     const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
@@ -850,8 +963,10 @@ describe("createWorker", () => {
     const firstRunPromise = worker.runNextJob();
     const secondRunPromise = worker.runNextJob();
 
-    await Promise.resolve();
-    await Promise.resolve();
+    await waitForCondition(
+      () => spawnedConfigs.length === 1,
+      "Expected the first same-context follow-up job to spawn",
+    );
     expect(spawnedConfigs).toHaveLength(1);
     expect(spawnedConfigs[0]?.sessionId).toBeUndefined();
     const waitingJobResult = queue.findByIdempotencyKey("mr-note:302");
@@ -888,8 +1003,10 @@ describe("createWorker", () => {
     }
 
     const thirdRunPromise = worker.runNextJob();
-    await Promise.resolve();
-    await Promise.resolve();
+    await waitForCondition(
+      () => spawnedConfigs.length === 2,
+      "Expected the resumed follow-up job to spawn",
+    );
     expect(spawnedConfigs).toHaveLength(2);
     expect(spawnedConfigs[1]?.sessionId).toBe("codex-session-93a");
 
@@ -1028,10 +1145,13 @@ describe("createWorker", () => {
     });
   });
 
-  it("marks the job failed when GitLab acknowledgment fails before the agent starts", async () => {
+  it("fails an MR review when the started status comment fails", async () => {
     const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
     const sessions = createSessionManager(database);
+    const killDeferred = createDeferred<void>();
+    const exitDeferred = createDeferred<Result<AgentResult, AppError>>();
+    let killCount = 0;
 
     const enqueueResult = queue.enqueue({
       payload: { kind: "review_mr", project: "team/project", mrIid: 73 },
@@ -1059,9 +1179,8 @@ describe("createWorker", () => {
           return okAsync(undefined);
         },
         postMRComment() {
-          return fromPromise(
-            Promise.reject(new Error("unreachable")),
-            () => gitlabError("status comment rejected"),
+          return fromPromise(Promise.reject(new Error("unreachable")), () =>
+            gitlabError("status comment rejected"),
           ).map(() => undefined);
         },
       },
@@ -1071,11 +1190,33 @@ describe("createWorker", () => {
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
-        return err(agentError("should not spawn", "claude", 1));
+        return ok({
+          pid: 73,
+          result: exitDeferred.promise,
+          kill() {
+            killCount += 1;
+            return killDeferred.promise;
+          },
+        });
       },
     });
 
-    const runResult = await worker.runNextJob();
+    let settled = false;
+    const runPromise = worker.runNextJob().then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await waitForCondition(
+      () => killCount === 1,
+      "Expected worker to kill the MR review agent after startup comment failure",
+    );
+    expect(settled).toBe(false);
+
+    killDeferred.resolve(undefined);
+    exitDeferred.resolve(err(agentError("killed after comment failure", "claude", -1)));
+
+    const runResult = await runPromise;
     expect(runResult.isErr()).toBe(true);
     if (runResult.isOk()) {
       return;
@@ -1209,9 +1350,8 @@ describe("createWorker", () => {
           return okAsync(undefined);
         },
         postIssueComment() {
-          return fromPromise(
-            Promise.reject(new Error("unreachable")),
-            () => gitlabError("status comment rejected"),
+          return fromPromise(Promise.reject(new Error("unreachable")), () =>
+            gitlabError("status comment rejected"),
           ).map(() => undefined);
         },
         postMRComment() {
@@ -1241,8 +1381,10 @@ describe("createWorker", () => {
       return result;
     });
 
-    await Promise.resolve();
-    await Promise.resolve();
+    await waitForCondition(
+      () => killCount === 1,
+      "Expected worker to kill the spawned agent after startup comment failure",
+    );
     expect(killCount).toBe(1);
     expect(settled).toBe(false);
 
@@ -1270,6 +1412,103 @@ describe("createWorker", () => {
 
     expect(storedJobResult.value?.status).toBe("failed");
     expect(storedJobResult.value?.error).toBe("gitlab_error: status comment rejected");
+  });
+
+  it("leaves a mention job recoverable when shutdown interrupts a started comment failure", async () => {
+    const database = createMigratedDatabase(databasePath);
+    const queue = createJobQueue(database);
+    const sessions = createSessionManager(database);
+    const killDeferred = createDeferred<void>();
+    const exitDeferred = createDeferred<Result<AgentResult, AppError>>();
+    const startedCommentDeferred = createDeferred<void>();
+    let killCount = 0;
+    let startedCommentCalls = 0;
+
+    const enqueueResult = queue.enqueue({
+      payload: {
+        kind: "handle_mention",
+        project: "team/project",
+        noteId: 8181,
+        issueIid: 521,
+        prompt: "Take a look",
+        agentType: "claude",
+      },
+      idempotencyKey: "note:8181",
+    });
+    expect(enqueueResult.isOk()).toBe(true);
+    if (enqueueResult.isErr()) {
+      return;
+    }
+
+    const worker = createWorker({
+      queue,
+      sessions,
+      gitlab: {
+        addReaction() {
+          return okAsync(1);
+        },
+        clearReaction() {
+          return okAsync(undefined);
+        },
+        removeReaction() {
+          return okAsync(undefined);
+        },
+        postIssueComment() {
+          startedCommentCalls += 1;
+          return fromPromise(startedCommentDeferred.promise, () =>
+            gitlabError("status comment rejected"),
+          ).map(() => undefined);
+        },
+        postMRComment() {
+          return okAsync(undefined);
+        },
+      },
+      logger: createLogger("fatal"),
+      defaultAgent: "codex",
+      workDir: process.cwd(),
+      timeoutMs: 60_000,
+      prepareWorkspace,
+      spawnAgent() {
+        return ok({
+          pid: 181,
+          result: exitDeferred.promise,
+          kill() {
+            killCount += 1;
+            return killDeferred.promise;
+          },
+        });
+      },
+    });
+
+    const runPromise = worker.runNextJob();
+    await waitForCondition(
+      () => startedCommentCalls === 1,
+      "Expected worker to wait on the started status comment before shutdown",
+    );
+
+    worker.stop();
+    startedCommentDeferred.reject(new Error("comment request failed during shutdown"));
+    await waitForCondition(() => killCount >= 1, "Expected shutdown to kill the spawned agent");
+
+    killDeferred.resolve(undefined);
+    exitDeferred.resolve(err(agentError("terminated during shutdown", "claude", 137)));
+
+    const runResult = await runPromise;
+    expect(runResult.isOk()).toBe(true);
+    if (runResult.isErr()) {
+      return;
+    }
+
+    expect(runResult.value).toBeNull();
+
+    const storedJobResult = queue.findByIdempotencyKey("note:8181");
+    expect(storedJobResult.isOk()).toBe(true);
+    if (storedJobResult.isErr()) {
+      return;
+    }
+
+    expect(storedJobResult.value?.status).toBe("processing");
+    expect(storedJobResult.value?.error).toBeNull();
   });
 
   it("handles a synchronous kill failure when the started status comment fails", async () => {
@@ -1307,9 +1546,8 @@ describe("createWorker", () => {
           return okAsync(undefined);
         },
         postIssueComment() {
-          return fromPromise(
-            Promise.reject(new Error("unreachable")),
-            () => gitlabError("status comment rejected"),
+          return fromPromise(Promise.reject(new Error("unreachable")), () =>
+            gitlabError("status comment rejected"),
           ).map(() => undefined);
         },
         postMRComment() {
@@ -1475,9 +1713,8 @@ describe("createWorker", () => {
           mrCommentCount += 1;
           return mrCommentCount === 1
             ? okAsync(undefined)
-            : fromPromise(
-                Promise.reject(new Error("unreachable")),
-                () => gitlabError("final status rejected"),
+            : fromPromise(Promise.reject(new Error("unreachable")), () =>
+                gitlabError("final status rejected"),
               ).map(() => undefined);
         },
       },
@@ -1688,6 +1925,9 @@ describe("createWorker", () => {
       listPending() {
         return ok(claimCount === 0 ? [job] : []);
       },
+      requeueProcessing() {
+        return ok(0);
+      },
       claimPending() {
         claimCount += 1;
         return ok(claimCount === 1 ? job : null);
@@ -1775,6 +2015,9 @@ describe("createWorker", () => {
     const queue: JobQueue = {
       listPending() {
         return ok([job]);
+      },
+      requeueProcessing() {
+        return ok(0);
       },
       claimPending() {
         return ok(job);
@@ -1882,6 +2125,9 @@ describe("createWorker", () => {
       listPending() {
         return ok([job]);
       },
+      requeueProcessing() {
+        return ok(0);
+      },
       claimPending() {
         return ok(job);
       },
@@ -1983,6 +2229,9 @@ describe("createWorker", () => {
     const queue: JobQueue = {
       listPending() {
         return ok([job]);
+      },
+      requeueProcessing() {
+        return ok(0);
       },
       claimPending() {
         return ok(job);
@@ -2115,9 +2364,8 @@ describe("createWorker", () => {
           mrCommentCount += 1;
           return mrCommentCount === 1
             ? okAsync(undefined)
-            : fromPromise(
-                Promise.reject(new Error("unreachable")),
-                () => gitlabError("failure comment rejected"),
+            : fromPromise(Promise.reject(new Error("unreachable")), () =>
+                gitlabError("failure comment rejected"),
               ).map(() => undefined);
         },
       },
@@ -2198,9 +2446,8 @@ describe("createWorker", () => {
           issueCommentCount += 1;
           return issueCommentCount === 1
             ? okAsync(undefined)
-            : fromPromise(
-                Promise.reject(new Error("unreachable")),
-                () => gitlabError("failure comment rejected"),
+            : fromPromise(Promise.reject(new Error("unreachable")), () =>
+                gitlabError("failure comment rejected"),
               ).map(() => undefined);
         },
         postMRComment() {
@@ -2722,5 +2969,255 @@ describe("createWorker", () => {
 
     expect(storedJobResult.value?.status).toBe("failed");
     expect(storedJobResult.value?.error).toBe("queue_error: workspace unavailable");
+  });
+
+  it("clears note reactions before leaving an interrupted job for recovery", async () => {
+    const database = createMigratedDatabase(databasePath);
+    const queue = createJobQueue(database);
+    const sessions = createSessionManager(database);
+    const killDeferred = createDeferred<void>();
+    const exitDeferred = createDeferred<Result<AgentResult, AppError>>();
+    let killCount = 0;
+    let spawned = false;
+    let reactionActive = false;
+
+    const enqueueResult = queue.enqueue({
+      payload: {
+        kind: "handle_mention",
+        project: "team/project",
+        noteId: 999,
+        issueIid: 52,
+        prompt: "Take a look",
+        agentType: "claude",
+      },
+      idempotencyKey: "note:999",
+    });
+    expect(enqueueResult.isOk()).toBe(true);
+    if (enqueueResult.isErr()) {
+      return;
+    }
+
+    const worker = createWorker({
+      queue,
+      sessions,
+      gitlab: {
+        addReaction() {
+          if (reactionActive) {
+            return fromPromise(Promise.reject(new Error("unreachable")), () =>
+              gitlabError("duplicate reaction"),
+            ).map(() => 1);
+          }
+
+          reactionActive = true;
+          return okAsync(1);
+        },
+        clearReaction() {
+          return okAsync(undefined);
+        },
+        removeReaction() {
+          reactionActive = false;
+          return okAsync(undefined);
+        },
+        postIssueComment() {
+          return okAsync(undefined);
+        },
+        postMRComment() {
+          return okAsync(undefined);
+        },
+      },
+      logger: createLogger("fatal"),
+      defaultAgent: "codex",
+      workDir: process.cwd(),
+      timeoutMs: 60_000,
+      prepareWorkspace,
+      spawnAgent() {
+        spawned = true;
+        return ok({
+          pid: 19,
+          result: exitDeferred.promise,
+          kill() {
+            killCount += 1;
+            return killDeferred.promise;
+          },
+        });
+      },
+    });
+
+    let settled = false;
+    const runPromise = worker.runNextJob().then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await waitForCondition(() => spawned, "Expected worker to spawn an agent before shutdown");
+    expect(settled).toBe(false);
+    worker.stop();
+    await waitForCondition(() => killCount === 1, "Expected worker.stop() to kill the agent");
+
+    killDeferred.resolve(undefined);
+    exitDeferred.resolve(err(agentError("terminated during shutdown", "claude", 137)));
+
+    const runResult = await runPromise;
+    expect(killCount).toBe(1);
+    expect(runResult.isOk()).toBe(true);
+    if (runResult.isErr()) {
+      return;
+    }
+
+    expect(runResult.value).toBeNull();
+
+    const storedJobResult = queue.findByIdempotencyKey("note:999");
+    expect(storedJobResult.isOk()).toBe(true);
+    if (storedJobResult.isErr()) {
+      return;
+    }
+
+    expect(storedJobResult.value?.status).toBe("processing");
+    expect(reactionActive).toBe(false);
+
+    const recoveryResult = queue.requeueProcessing();
+    expect(recoveryResult.isOk()).toBe(true);
+    if (recoveryResult.isErr()) {
+      return;
+    }
+
+    const retryWorker = createWorker({
+      queue,
+      sessions,
+      gitlab: {
+        addReaction() {
+          if (reactionActive) {
+            return fromPromise(Promise.reject(new Error("unreachable")), () =>
+              gitlabError("duplicate reaction"),
+            ).map(() => 1);
+          }
+
+          reactionActive = true;
+          return okAsync(1);
+        },
+        clearReaction() {
+          return okAsync(undefined);
+        },
+        removeReaction() {
+          reactionActive = false;
+          return okAsync(undefined);
+        },
+        postIssueComment() {
+          return okAsync(undefined);
+        },
+        postMRComment() {
+          return okAsync(undefined);
+        },
+      },
+      logger: createLogger("fatal"),
+      defaultAgent: "codex",
+      workDir: process.cwd(),
+      timeoutMs: 60_000,
+      prepareWorkspace,
+      spawnAgent() {
+        return ok(
+          createAgentProcess({
+            exitCode: 0,
+            sessionId: "claude-session-999-retry",
+            stdout: "ok",
+            stderr: "",
+            durationMs: 250,
+          }),
+        );
+      },
+    });
+
+    const retryResult = await retryWorker.runNextJob();
+    expect(retryResult.isOk()).toBe(true);
+    if (retryResult.isErr()) {
+      return;
+    }
+
+    expect(retryResult.value?.status).toBe("completed");
+  });
+
+  it("does not post a started comment or spawn a review agent after shutdown starts", async () => {
+    const database = createMigratedDatabase(databasePath);
+    const queue = createJobQueue(database);
+    const sessions = createSessionManager(database);
+    const acknowledgmentDeferred = createDeferred<number>();
+    let acknowledgmentCalls = 0;
+    let startedCommentCalls = 0;
+    let spawnCount = 0;
+
+    const enqueueResult = queue.enqueue({
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 120,
+      },
+      idempotencyKey: "mr:120",
+    });
+    expect(enqueueResult.isOk()).toBe(true);
+    if (enqueueResult.isErr()) {
+      return;
+    }
+
+    const worker = createWorker({
+      queue,
+      sessions,
+      gitlab: {
+        addReaction() {
+          acknowledgmentCalls += 1;
+          return fromPromise(acknowledgmentDeferred.promise, () =>
+            gitlabError("acknowledgment rejected"),
+          );
+        },
+        clearReaction() {
+          return okAsync(undefined);
+        },
+        removeReaction() {
+          return okAsync(undefined);
+        },
+        postIssueComment() {
+          return okAsync(undefined);
+        },
+        postMRComment() {
+          startedCommentCalls += 1;
+          return okAsync(undefined);
+        },
+      },
+      logger: createLogger("fatal"),
+      defaultAgent: "claude",
+      workDir: process.cwd(),
+      timeoutMs: 60_000,
+      prepareWorkspace,
+      spawnAgent() {
+        spawnCount += 1;
+        return err(agentError("should not spawn", "claude", 1));
+      },
+    });
+
+    const runPromise = worker.runNextJob();
+    await waitForCondition(
+      () => acknowledgmentCalls === 1,
+      "Expected review acknowledgment to begin before shutdown",
+    );
+
+    worker.stop();
+    acknowledgmentDeferred.resolve(1);
+
+    const runResult = await runPromise;
+    expect(runResult.isOk()).toBe(true);
+    if (runResult.isErr()) {
+      return;
+    }
+
+    expect(runResult.value).toBeNull();
+    expect(startedCommentCalls).toBe(0);
+    expect(spawnCount).toBe(0);
+
+    const storedJobResult = queue.findByIdempotencyKey("mr:120");
+    expect(storedJobResult.isOk()).toBe(true);
+    if (storedJobResult.isErr()) {
+      return;
+    }
+
+    expect(storedJobResult.value?.status).toBe("processing");
   });
 });

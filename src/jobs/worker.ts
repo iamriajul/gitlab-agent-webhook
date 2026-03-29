@@ -1,19 +1,30 @@
-import type { Logger } from "../config/logger.ts";
+import type { AgentConfig, AgentProcess, AgentResult, AgentType } from "../agents/types.ts";
 import { REACTION_DONE, REACTION_FAILED, REACTION_SEEN } from "../config/constants.ts";
+import type { Logger } from "../config/logger.ts";
 import type { ReactionTarget } from "../gitlab/service.ts";
 import type { AgentSession, SessionContext, SessionManager } from "../sessions/manager.ts";
-import { agentError } from "../types/errors.ts";
 import type { AppError } from "../types/errors.ts";
+import { agentError, queueError } from "../types/errors.ts";
 import type { AgentKind, EmojiName } from "../types/events.ts";
-import { err, fromPromise, ok, type Result, type ResultAsync } from "../types/result.ts";
-import type { AgentConfig, AgentProcess, AgentResult, AgentType } from "../agents/types.ts";
-import type { Job, JobPayload } from "./types.ts";
+import {
+  err,
+  fromPromise,
+  fromThrowable,
+  ok,
+  type Result,
+  type ResultAsync,
+} from "../types/result.ts";
 import type { JobQueue } from "./queue.ts";
+import type { Job, JobPayload } from "./types.ts";
 
 export interface WorkerGitLabClient {
   addReaction(target: ReactionTarget, emoji: EmojiName): ResultAsync<number, AppError>;
   clearReaction(target: ReactionTarget, emoji: EmojiName): ResultAsync<void, AppError>;
-  removeReaction(target: ReactionTarget, emoji: EmojiName, awardId: number): ResultAsync<void, AppError>;
+  removeReaction(
+    target: ReactionTarget,
+    emoji: EmojiName,
+    awardId: number,
+  ): ResultAsync<void, AppError>;
   postIssueComment(project: string, issueIid: number, body: string): ResultAsync<void, AppError>;
   postMRComment(project: string, mrIid: number, body: string): ResultAsync<void, AppError>;
 }
@@ -33,6 +44,7 @@ export interface WorkerDependencies {
 
 export interface Worker {
   runNextJob(): Promise<Result<Job | null, AppError>>;
+  stop(): void;
 }
 
 interface JobReactionState {
@@ -60,6 +72,14 @@ interface ProcessedJobState {
 }
 
 type CoordinationKey = string | null;
+
+function formatUnknownError(cause: unknown): string {
+  if (cause instanceof Error) {
+    return cause.message;
+  }
+
+  return String(cause);
+}
 
 function mapAgentType(agentKind: AgentKind): AgentType {
   switch (agentKind) {
@@ -330,19 +350,17 @@ function failureCommentBody(error: AppError): string {
 }
 
 function runAsyncResult<T>(result: ResultAsync<T, AppError>): Promise<Result<T, AppError>> {
-  return result.match(
-    (value) => ok(value),
-    (error) => err(error),
-  );
+  return new Promise<Result<T, AppError>>((resolve, reject) => {
+    result.then(resolve, reject);
+  });
 }
 
 async function awaitAgentResult(
   process: AgentProcess,
   agentKind: AgentKind,
 ): Promise<Result<AgentResult, AppError>> {
-  const awaitedResult = await fromPromise(
-    process.result,
-    () => agentError("Agent process promise rejected", agentKind, -1),
+  const awaitedResult = await fromPromise(process.result, () =>
+    agentError("Agent process promise rejected", agentKind, -1),
   ).match(
     (value) => value,
     (error) => err(error),
@@ -366,7 +384,10 @@ async function postStatusComment(
   }
 }
 
-function validateAgentExit(result: AgentResult, agentKind: AgentKind): Result<AgentResult, AppError> {
+function validateAgentExit(
+  result: AgentResult,
+  agentKind: AgentKind,
+): Result<AgentResult, AppError> {
   if (result.exitCode === 0) {
     return ok(result);
   }
@@ -383,6 +404,14 @@ function validateAgentExit(result: AgentResult, agentKind: AgentKind): Result<Ag
 
 export function createWorker(dependencies: WorkerDependencies): Worker {
   const activeCoordinationKeys = new Set<string>();
+  const activeJobs = new Map<Job["id"], AgentProcess>();
+  const interruptedJobs = new Set<Job["id"]>();
+  let shutdownRequested = false;
+
+  function interruptForShutdown(jobId: Job["id"]): Result<never, AppError> {
+    interruptedJobs.add(jobId);
+    return err(queueError("Worker shutdown interrupted active job"));
+  }
 
   async function tryWithCoordinationLock<T>(
     key: CoordinationKey,
@@ -410,55 +439,60 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
     target: ReactionTarget,
     jobId: Job["id"],
   ): Promise<Result<JobReactionState, AppError>> {
-    const reactionResult = await runAsyncResult(dependencies.gitlab.addReaction(target, REACTION_SEEN));
+    const reactionResult = await runAsyncResult(
+      dependencies.gitlab.addReaction(target, REACTION_SEEN),
+    );
     if (reactionResult.isOk()) {
       return ok({
         target,
         awardId: reactionResult.value,
       });
     }
+    const originalReactionError = reactionResult.error;
+
+    async function retryAfterClearingReaction(): Promise<Result<JobReactionState, AppError>> {
+      const clearReactionResult = await runAsyncResult(
+        dependencies.gitlab.clearReaction(target, REACTION_SEEN),
+      );
+      if (clearReactionResult.isErr()) {
+        dependencies.logger.warn(
+          {
+            error: clearReactionResult.error,
+            jobId,
+            reaction: REACTION_SEEN,
+            target,
+            originalError: originalReactionError,
+          },
+          "Failed to clear stale acknowledgment reaction before retry",
+        );
+        return err(originalReactionError);
+      }
+
+      const retryReactionResult = await runAsyncResult(
+        dependencies.gitlab.addReaction(target, REACTION_SEEN),
+      );
+      if (retryReactionResult.isErr()) {
+        return err(retryReactionResult.error);
+      }
+
+      return ok({
+        target,
+        awardId: retryReactionResult.value,
+      });
+    }
 
     switch (payload.kind) {
-      case "review_mr": {
-        const clearReactionResult = await runAsyncResult(
-          dependencies.gitlab.clearReaction(target, REACTION_SEEN),
-        );
-        if (clearReactionResult.isErr()) {
-          dependencies.logger.warn(
-            {
-              error: clearReactionResult.error,
-              jobId,
-              reaction: REACTION_SEEN,
-              target,
-              originalError: reactionResult.error,
-            },
-            "Failed to clear stale acknowledgment reaction before retry",
-          );
-          return err(reactionResult.error);
-        }
-
-        const retryReactionResult = await runAsyncResult(
-          dependencies.gitlab.addReaction(target, REACTION_SEEN),
-        );
-        if (retryReactionResult.isErr()) {
-          return err(retryReactionResult.error);
-        }
-
-        return ok({
-          target,
-          awardId: retryReactionResult.value,
-        });
-      }
+      case "review_mr":
+        return retryAfterClearingReaction();
       case "handle_mention":
-        return err(reactionResult.error);
+        return retryAfterClearingReaction();
       case "handle_mr_mention":
-        return err(reactionResult.error);
+        return retryAfterClearingReaction();
     }
   }
 
-  async function transitionReaction(
+  async function removeAcknowledgmentReaction(
     reaction: JobReactionState,
-    emoji: EmojiName,
     jobId: Job["id"],
   ): Promise<void> {
     const removeResult = await runAsyncResult(
@@ -475,7 +509,13 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
         "Failed to remove acknowledgment reaction",
       );
     }
+  }
 
+  async function addTerminalReaction(
+    reaction: JobReactionState,
+    emoji: EmojiName,
+    jobId: Job["id"],
+  ): Promise<void> {
     if (reaction.target.kind === "mr") {
       for (const terminalEmoji of [REACTION_DONE, REACTION_FAILED]) {
         const clearResult = await runAsyncResult(
@@ -507,6 +547,15 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
         "Failed to add terminal reaction",
       );
     }
+  }
+
+  async function transitionReaction(
+    reaction: JobReactionState,
+    emoji: EmojiName,
+    jobId: Job["id"],
+  ): Promise<void> {
+    await removeAcknowledgmentReaction(reaction, jobId);
+    await addTerminalReaction(reaction, emoji, jobId);
   }
 
   async function markJobFailed(job: Job, error: AppError): Promise<Result<never, AppError>> {
@@ -589,6 +638,7 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
     }
   }
 
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: worker orchestration is intentionally linear and covered by focused tests.
   async function processJob(job: Job): Promise<Result<ProcessedJobState, AppError>> {
     const payload = job.payload;
     const agentKind = agentKindForPayload(payload, dependencies.defaultAgent);
@@ -607,9 +657,7 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       reusableSession.agentSessionId.length > 0 &&
       supportsResume(agentKind);
     const resumeSessionId =
-      canResumeExistingSession && reusableSession !== null
-        ? reusableSession.agentSessionId
-        : null;
+      canResumeExistingSession && reusableSession !== null ? reusableSession.agentSessionId : null;
 
     const reactionResult = await addAcknowledgmentReaction(payload, reactionTarget, job.id);
     if (reactionResult.isErr()) {
@@ -631,87 +679,218 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       env: buildAgentEnv(dependencies.env),
       timeoutMs: dependencies.timeoutMs,
     };
-    const spawnResult = dependencies.spawnAgent(
+    const spawnConfig =
       resumeSessionId !== null
         ? { ...spawnConfigBase, sessionId: resumeSessionId }
-        : spawnConfigBase,
-    );
-    if (spawnResult.isErr()) {
-      const failureCommentResult = await postStatusComment(
+        : spawnConfigBase;
+
+    let spawnedProcess: AgentProcess | null = null;
+    if (payload.kind === "review_mr") {
+      if (shutdownRequested) {
+        await removeAcknowledgmentReaction(jobReaction, job.id);
+        return interruptForShutdown(job.id);
+      }
+
+      const spawnResult = dependencies.spawnAgent(spawnConfig);
+      if (spawnResult.isErr()) {
+        const failureCommentResult = await postStatusComment(
+          dependencies.gitlab,
+          payload,
+          `Agent failed: ${formatAppError(spawnResult.error)}`,
+        );
+        if (failureCommentResult.isErr()) {
+          dependencies.logger.warn(
+            {
+              error: failureCommentResult.error,
+              jobId: job.id,
+              originalError: spawnResult.error,
+            },
+            "Failed to post agent startup failure status",
+          );
+        }
+
+        await transitionReaction(jobReaction, REACTION_FAILED, job.id);
+        return err(spawnResult.error);
+      }
+
+      const reviewProcess = spawnResult.value;
+      spawnedProcess = reviewProcess;
+      activeJobs.set(job.id, reviewProcess);
+
+      const startedCommentResult = await postStatusComment(
         dependencies.gitlab,
         payload,
-        `Agent failed: ${formatAppError(spawnResult.error)}`,
+        startCommentBody(agentKind, resumeSessionId !== null),
       );
-      if (failureCommentResult.isErr()) {
-        dependencies.logger.warn(
-          {
-            error: failureCommentResult.error,
-            jobId: job.id,
-            originalError: spawnResult.error,
-          },
-          "Failed to post agent startup failure status",
-        );
+      if (startedCommentResult.isErr()) {
+        if (!interruptedJobs.has(job.id)) {
+          const killInvocationResult = fromThrowable(
+            () => reviewProcess.kill(),
+            () =>
+              agentError("Failed to terminate agent after startup status failure", agentKind, -1),
+          )();
+          const killResult = killInvocationResult.isErr()
+            ? err(killInvocationResult.error)
+            : await fromPromise(Promise.resolve(killInvocationResult.value), () =>
+                agentError("Failed to terminate agent after startup status failure", agentKind, -1),
+              ).match(
+                () => ok(undefined),
+                (error) => err(error),
+              );
+          if (killResult.isErr()) {
+            dependencies.logger.warn(
+              {
+                error: killResult.error,
+                jobId: job.id,
+                pid: reviewProcess.pid,
+                originalError: startedCommentResult.error,
+              },
+              "Failed to wait for spawned agent shutdown after startup status failure",
+            );
+          }
+        }
+
+        const exitResult = await awaitAgentResult(reviewProcess, agentKind).finally(() => {
+          activeJobs.delete(job.id);
+        });
+        if (exitResult.isErr()) {
+          dependencies.logger.warn(
+            {
+              error: exitResult.error,
+              jobId: job.id,
+              pid: reviewProcess.pid,
+              originalError: startedCommentResult.error,
+            },
+            "Failed while waiting for spawned agent to exit after startup status failure",
+          );
+        }
+
+        if (interruptedJobs.has(job.id)) {
+          await removeAcknowledgmentReaction(jobReaction, job.id);
+          return interruptForShutdown(job.id);
+        }
+
+        await transitionReaction(jobReaction, REACTION_FAILED, job.id);
+        return err(startedCommentResult.error);
+      }
+    } else {
+      if (shutdownRequested) {
+        await removeAcknowledgmentReaction(jobReaction, job.id);
+        return interruptForShutdown(job.id);
       }
 
-      await transitionReaction(jobReaction, REACTION_FAILED, job.id);
-      return err(spawnResult.error);
+      const spawnResult = dependencies.spawnAgent(spawnConfig);
+      if (spawnResult.isErr()) {
+        const failureCommentResult = await postStatusComment(
+          dependencies.gitlab,
+          payload,
+          `Agent failed: ${formatAppError(spawnResult.error)}`,
+        );
+        if (failureCommentResult.isErr()) {
+          dependencies.logger.warn(
+            {
+              error: failureCommentResult.error,
+              jobId: job.id,
+              originalError: spawnResult.error,
+            },
+            "Failed to post agent startup failure status",
+          );
+        }
+
+        await transitionReaction(jobReaction, REACTION_FAILED, job.id);
+        return err(spawnResult.error);
+      }
+
+      activeJobs.set(job.id, spawnResult.value);
+      const startedCommentResult = await postStatusComment(
+        dependencies.gitlab,
+        payload,
+        startCommentBody(agentKind, resumeSessionId !== null),
+      );
+      if (startedCommentResult.isErr()) {
+        if (!interruptedJobs.has(job.id)) {
+          const killInvocationResult = fromThrowable(
+            () => spawnResult.value.kill(),
+            () =>
+              agentError("Failed to terminate agent after startup status failure", agentKind, -1),
+          )();
+          const killResult = killInvocationResult.isErr()
+            ? err(killInvocationResult.error)
+            : await fromPromise(Promise.resolve(killInvocationResult.value), () =>
+                agentError("Failed to terminate agent after startup status failure", agentKind, -1),
+              ).match(
+                () => ok(undefined),
+                (error) => err(error),
+              );
+          if (killResult.isErr()) {
+            dependencies.logger.warn(
+              {
+                error: killResult.error,
+                jobId: job.id,
+                pid: spawnResult.value.pid,
+                originalError: startedCommentResult.error,
+              },
+              "Failed to wait for spawned agent shutdown after startup status failure",
+            );
+          }
+        }
+
+        const exitResult = await awaitAgentResult(spawnResult.value, agentKind).finally(() => {
+          activeJobs.delete(job.id);
+        });
+        if (exitResult.isErr()) {
+          dependencies.logger.warn(
+            {
+              error: exitResult.error,
+              jobId: job.id,
+              pid: spawnResult.value.pid,
+              originalError: startedCommentResult.error,
+            },
+            "Failed while waiting for spawned agent to exit after startup status failure",
+          );
+        }
+
+        if (interruptedJobs.has(job.id)) {
+          await removeAcknowledgmentReaction(jobReaction, job.id);
+          return interruptForShutdown(job.id);
+        }
+
+        await transitionReaction(jobReaction, REACTION_FAILED, job.id);
+        return err(startedCommentResult.error);
+      }
+
+      spawnedProcess = spawnResult.value;
     }
 
-    const startedCommentResult = await postStatusComment(
-      dependencies.gitlab,
-      payload,
-      startCommentBody(agentKind, resumeSessionId !== null),
+    const agentResult = await awaitAgentResult(spawnedProcess, agentKind).finally(() => {
+      activeJobs.delete(job.id);
+    });
+    const completedAgentResult = agentResult.andThen((result) =>
+      validateAgentExit(result, agentKind),
     );
-    if (startedCommentResult.isErr()) {
-      const killResult = await fromPromise(
-        Promise.resolve().then(() => spawnResult.value.kill()),
-        () => agentError("Failed to terminate agent after startup status failure", agentKind, -1),
-      ).match(
-        () => ok(undefined),
-        (error) => err(error),
-      );
-      if (killResult.isErr()) {
-        dependencies.logger.warn(
-          {
-            error: killResult.error,
-            jobId: job.id,
-            pid: spawnResult.value.pid,
-            originalError: startedCommentResult.error,
-          },
-          "Failed to wait for spawned agent shutdown after startup status failure",
-        );
-      }
-
-      const exitResult = await awaitAgentResult(spawnResult.value, agentKind);
-      if (exitResult.isErr()) {
-        dependencies.logger.warn(
-          {
-            error: exitResult.error,
-            jobId: job.id,
-            pid: spawnResult.value.pid,
-            originalError: startedCommentResult.error,
-          },
-          "Failed while waiting for spawned agent to exit after startup status failure",
-        );
-      }
-
-      await transitionReaction(jobReaction, REACTION_FAILED, job.id);
-      return err(startedCommentResult.error);
-    }
-
-    const agentResult = await awaitAgentResult(spawnResult.value, agentKind);
-    const completedAgentResult = agentResult.andThen((result) => validateAgentExit(result, agentKind));
     if (completedAgentResult.isErr()) {
+      if (interruptedJobs.has(job.id)) {
+        await removeAcknowledgmentReaction(jobReaction, job.id);
+        return err(queueError("Worker shutdown interrupted active job"));
+      }
+
       let surfacedError: AppError = completedAgentResult.error;
       if (agentResult.isOk()) {
         const persistSessionResult = persistSessionUpdate(
-          buildPendingSessionUpdate(payload, reusableSession, agentKind, context, agentResult.value),
+          buildPendingSessionUpdate(
+            payload,
+            reusableSession,
+            agentKind,
+            context,
+            agentResult.value,
+          ),
         );
         if (persistSessionResult.isErr()) {
           surfacedError = persistSessionResult.error;
         }
       }
 
+      await removeAcknowledgmentReaction(jobReaction, job.id);
       const failureCommentResult = await postStatusComment(
         dependencies.gitlab,
         payload,
@@ -728,10 +907,11 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
         );
       }
 
-      await transitionReaction(jobReaction, REACTION_FAILED, job.id);
+      await addTerminalReaction(jobReaction, REACTION_FAILED, job.id);
       return err(surfacedError);
     }
 
+    interruptedJobs.delete(job.id);
     return ok({
       reaction: jobReaction,
       sessionUpdate: buildPendingSessionUpdate(
@@ -743,9 +923,100 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       ),
     });
   }
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: queue claim and terminal state handling intentionally stay inline with the worker contract.
+  async function claimAndRunPendingJob(pendingJob: Job): Promise<Result<Job | null, AppError>> {
+    const claimResult = dependencies.queue.claimPending(pendingJob.id);
+    if (claimResult.isErr()) {
+      return err(claimResult.error);
+    }
+
+    const job = claimResult.value;
+    if (job === null) {
+      return ok(null);
+    }
+
+    const processResult = await processJob(job);
+    if (processResult.isErr()) {
+      if (interruptedJobs.has(job.id)) {
+        interruptedJobs.delete(job.id);
+        dependencies.logger.info({ jobId: job.id }, "Worker shutdown left job in processing");
+        return ok(null);
+      }
+
+      return markJobFailed(job, processResult.error);
+    }
+
+    const completeResult = dependencies.queue.complete(job.id);
+    if (completeResult.isErr()) {
+      await removeAcknowledgmentReaction(processResult.value.reaction, job.id);
+      const failureCommentResult = await postStatusComment(
+        dependencies.gitlab,
+        job.payload,
+        failureCommentBody(completeResult.error),
+      );
+      if (failureCommentResult.isErr()) {
+        dependencies.logger.warn(
+          {
+            error: failureCommentResult.error,
+            jobId: job.id,
+            originalError: completeResult.error,
+          },
+          "Failed to post terminal queue completion failure status",
+        );
+      }
+      await addTerminalReaction(processResult.value.reaction, REACTION_FAILED, job.id);
+      return markJobTerminalFailure(job, completeResult.error);
+    }
+
+    const persistSessionResult = persistSessionUpdate(processResult.value.sessionUpdate);
+    if (persistSessionResult.isErr()) {
+      await removeAcknowledgmentReaction(processResult.value.reaction, job.id);
+      const failureCommentResult = await postStatusComment(
+        dependencies.gitlab,
+        job.payload,
+        failureCommentBody(persistSessionResult.error),
+      );
+      if (failureCommentResult.isErr()) {
+        dependencies.logger.warn(
+          {
+            error: failureCommentResult.error,
+            jobId: job.id,
+            originalError: persistSessionResult.error,
+          },
+          "Failed to post terminal session persistence failure status",
+        );
+      }
+      await addTerminalReaction(processResult.value.reaction, REACTION_FAILED, job.id);
+      return markJobTerminalFailure(job, persistSessionResult.error);
+    }
+
+    await transitionReaction(processResult.value.reaction, REACTION_DONE, job.id);
+
+    const successCommentResult = await postStatusComment(
+      dependencies.gitlab,
+      job.payload,
+      successCommentBody(),
+    );
+    if (successCommentResult.isErr()) {
+      dependencies.logger.warn(
+        {
+          error: successCommentResult.error,
+          jobId: job.id,
+        },
+        "Final status comment failed after successful job",
+      );
+    }
+
+    dependencies.logger.info({ jobId: job.id }, "Job completed");
+    return ok(completeResult.value);
+  }
 
   return {
     async runNextJob() {
+      if (shutdownRequested) {
+        return ok(null);
+      }
+
       const pendingJobsResult = dependencies.queue.listPending();
       if (pendingJobsResult.isErr()) {
         return err(pendingJobsResult.error);
@@ -755,86 +1026,7 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
         const agentKind = agentKindForPayload(pendingJob.payload, dependencies.defaultAgent);
         const runResult = await tryWithCoordinationLock(
           coordinationKeyForPayload(pendingJob.payload, agentKind),
-          async () => {
-            const claimResult = dependencies.queue.claimPending(pendingJob.id);
-            if (claimResult.isErr()) {
-              return err(claimResult.error);
-            }
-
-            const job = claimResult.value;
-            if (job === null) {
-              return ok(null);
-            }
-
-            const processResult = await processJob(job);
-            if (processResult.isErr()) {
-              return markJobFailed(job, processResult.error);
-            }
-
-            const completeResult = dependencies.queue.complete(job.id);
-            if (completeResult.isErr()) {
-              const failureCommentResult = await postStatusComment(
-                dependencies.gitlab,
-                job.payload,
-                failureCommentBody(completeResult.error),
-              );
-              if (failureCommentResult.isErr()) {
-                dependencies.logger.warn(
-                  {
-                    error: failureCommentResult.error,
-                    jobId: job.id,
-                    originalError: completeResult.error,
-                  },
-                  "Failed to post terminal queue completion failure status",
-                );
-              }
-
-              await transitionReaction(processResult.value.reaction, REACTION_FAILED, job.id);
-              return markJobTerminalFailure(job, completeResult.error);
-            }
-
-            const persistSessionResult = persistSessionUpdate(processResult.value.sessionUpdate);
-            if (persistSessionResult.isErr()) {
-              const failureCommentResult = await postStatusComment(
-                dependencies.gitlab,
-                job.payload,
-                failureCommentBody(persistSessionResult.error),
-              );
-              if (failureCommentResult.isErr()) {
-                dependencies.logger.warn(
-                  {
-                    error: failureCommentResult.error,
-                    jobId: job.id,
-                    originalError: persistSessionResult.error,
-                  },
-                  "Failed to post terminal session persistence failure status",
-                );
-              }
-
-              await transitionReaction(processResult.value.reaction, REACTION_FAILED, job.id);
-              return markJobTerminalFailure(job, persistSessionResult.error);
-            }
-
-            await transitionReaction(processResult.value.reaction, REACTION_DONE, job.id);
-
-            const successCommentResult = await postStatusComment(
-              dependencies.gitlab,
-              job.payload,
-              successCommentBody(),
-            );
-            if (successCommentResult.isErr()) {
-              dependencies.logger.warn(
-                {
-                  error: successCommentResult.error,
-                  jobId: job.id,
-                },
-                "Final status comment failed after successful job",
-              );
-            }
-
-            dependencies.logger.info({ jobId: job.id }, "Job completed");
-            return ok(completeResult.value);
-          },
+          async () => claimAndRunPendingJob(pendingJob),
         );
 
         if (runResult === null) {
@@ -851,6 +1043,42 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       }
 
       return ok(null);
+    },
+
+    stop() {
+      shutdownRequested = true;
+      for (const [jobId, process] of activeJobs.entries()) {
+        interruptedJobs.add(jobId);
+        const killResult = fromThrowable(
+          () => process.kill(),
+          (cause) =>
+            agentError(
+              `Failed to terminate agent during worker shutdown: ${formatUnknownError(cause)}`,
+              "claude",
+              -1,
+            ),
+        )();
+        if (killResult.isErr()) {
+          interruptedJobs.delete(jobId);
+          dependencies.logger.warn(
+            { error: killResult.error, jobId, pid: process.pid },
+            "Failed to start agent shutdown during worker stop",
+          );
+          continue;
+        }
+
+        void Promise.resolve(killResult.value).catch((cause: unknown) => {
+          interruptedJobs.delete(jobId);
+          dependencies.logger.warn(
+            {
+              error: formatUnknownError(cause),
+              jobId,
+              pid: process.pid,
+            },
+            "Agent shutdown promise rejected during worker stop",
+          );
+        });
+      }
     },
   };
 }
