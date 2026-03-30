@@ -39,7 +39,7 @@ describe("agent adapters", () => {
     ]);
   });
 
-  it("builds a resumed Claude command without repeating the system prompt", () => {
+  it("builds a resumed Claude command with the system prompt", () => {
     const command = buildClaudeCommand(
       createConfig({
         agent: { kind: "claude" },
@@ -55,6 +55,8 @@ describe("agent adapters", () => {
       "--verbose",
       "--output-format",
       "stream-json",
+      "--append-system-prompt",
+      "System instructions",
       "--resume",
       "claude-session-1",
       "--",

@@ -14,17 +14,19 @@ export function buildClaudeCommand(config: AgentConfig): AgentCommand {
   ];
   const resumeSessionId = config.sessionId?.trim();
 
+  const systemArgs = ["--append-system-prompt", config.systemPrompt];
+
   if (resumeSessionId !== undefined && resumeSessionId.length > 0) {
     return {
       command: claudePath(config),
-      args: [...baseArgs, "--resume", resumeSessionId, "--", config.prompt],
+      args: [...baseArgs, ...systemArgs, "--resume", resumeSessionId, "--", config.prompt],
       env: {},
     };
   }
 
   return {
     command: claudePath(config),
-    args: [...baseArgs, "--append-system-prompt", config.systemPrompt, "--", config.prompt],
+    args: [...baseArgs, ...systemArgs, "--", config.prompt],
     env: {},
   };
 }
