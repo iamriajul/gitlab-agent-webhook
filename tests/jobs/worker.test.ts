@@ -279,12 +279,6 @@ describe("createWorker", () => {
         target: { kind: "issue_note", project: "team/project", issueIid: 55, noteId: 101 },
         emoji: "white_check_mark",
       },
-      {
-        kind: "issue_comment",
-        project: "team/project",
-        issueIid: 55,
-        body: "Agent finished successfully.",
-      },
     ]);
   });
 
@@ -378,12 +372,6 @@ describe("createWorker", () => {
         kind: "reaction",
         target: { kind: "mr", project: "team/project", mrIid: 88 },
         emoji: "white_check_mark",
-      },
-      {
-        kind: "mr_comment",
-        project: "team/project",
-        mrIid: 88,
-        body: "Agent finished successfully.",
       },
     ]);
   });

@@ -301,10 +301,6 @@ function shouldPersistSession(payload: JobPayload): boolean {
   }
 }
 
-function successCommentBody(): string {
-  return "Agent finished successfully.";
-}
-
 function failureCommentBody(error: AppError): string {
   return `Agent failed: ${formatAppError(error)}`;
 }
@@ -855,21 +851,6 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
     }
 
     await transitionReaction(processResult.value.reaction, REACTION_DONE, job.id);
-
-    const successCommentResult = await postStatusComment(
-      dependencies.gitlab,
-      job.payload,
-      successCommentBody(),
-    );
-    if (successCommentResult.isErr()) {
-      dependencies.logger.warn(
-        {
-          error: successCommentResult.error,
-          jobId: job.id,
-        },
-        "Final status comment failed after successful job",
-      );
-    }
 
     dependencies.logger.info({ jobId: job.id }, "Job completed");
     return ok(completeResult.value);
