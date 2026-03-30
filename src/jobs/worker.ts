@@ -72,7 +72,7 @@ type PendingSessionUpdate =
   | { readonly kind: "none" };
 
 interface ProcessedJobState {
-  readonly reaction: JobReactionState;
+  readonly reaction: JobReactionState | null;
   readonly sessionUpdate: PendingSessionUpdate;
 }
 
@@ -146,9 +146,12 @@ function agentKindForPayload(payload: JobPayload, defaultAgent: AgentKind): Agen
   }
 }
 
-function reactionTargetForPayload(payload: JobPayload): ReactionTarget {
+function reactionTargetForPayload(payload: JobPayload): ReactionTarget | null {
   switch (payload.kind) {
     case "handle_mention":
+      if (payload.noteId === 0) {
+        return null;
+      }
       return {
         kind: "issue_note",
         project: payload.project,
@@ -156,6 +159,9 @@ function reactionTargetForPayload(payload: JobPayload): ReactionTarget {
         noteId: payload.noteId,
       };
     case "handle_mr_mention":
+      if (payload.noteId === 0) {
+        return null;
+      }
       return {
         kind: "mr_note",
         project: payload.project,
@@ -489,9 +495,12 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
   }
 
   async function removeAcknowledgmentReaction(
-    reaction: JobReactionState,
+    reaction: JobReactionState | null,
     jobId: Job["id"],
   ): Promise<void> {
+    if (reaction === null) {
+      return;
+    }
     const removeResult = await runAsyncResult(
       dependencies.gitlab.removeReaction(reaction.target, REACTION_SEEN, reaction.awardId),
     );
@@ -509,10 +518,13 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
   }
 
   async function addTerminalReaction(
-    reaction: JobReactionState,
+    reaction: JobReactionState | null,
     emoji: EmojiName,
     jobId: Job["id"],
   ): Promise<void> {
+    if (reaction === null) {
+      return;
+    }
     if (reaction.target.kind === "mr") {
       for (const terminalEmoji of [REACTION_DONE, REACTION_FAILED]) {
         const clearResult = await runAsyncResult(
@@ -547,7 +559,7 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
   }
 
   async function transitionReaction(
-    reaction: JobReactionState,
+    reaction: JobReactionState | null,
     emoji: EmojiName,
     jobId: Job["id"],
   ): Promise<void> {
@@ -656,11 +668,14 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
     const resumeSessionId =
       canResumeExistingSession && reusableSession !== null ? reusableSession.agentSessionId : null;
 
-    const reactionResult = await addAcknowledgmentReaction(payload, reactionTarget, job.id);
-    if (reactionResult.isErr()) {
-      return err(reactionResult.error);
+    let jobReaction: JobReactionState | null = null;
+    if (reactionTarget !== null) {
+      const reactionResult = await addAcknowledgmentReaction(payload, reactionTarget, job.id);
+      if (reactionResult.isErr()) {
+        return err(reactionResult.error);
+      }
+      jobReaction = reactionResult.value;
     }
-    const jobReaction = reactionResult.value;
 
     const prepareWorkspaceResult = dependencies.prepareWorkspace(
       payload,
