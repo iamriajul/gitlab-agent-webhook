@@ -14,6 +14,7 @@
     "test:watch": "bun test --watch",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "setup-webhooks": "bun scripts/setup-webhooks.ts",
     "build": "bun build src/index.ts --outdir dist --target bun && rm -rf dist/db/migrations && mkdir -p dist/db && cp -R src/db/migrations dist/db/migrations",
     "start": "bun run dist/index.js",
     "prepare": "command -v lefthook >/dev/null 2>&1 && lefthook install || true"
