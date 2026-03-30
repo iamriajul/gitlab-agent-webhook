@@ -269,12 +269,6 @@ describe("createWorker", () => {
         emoji: "eyes",
       },
       {
-        kind: "issue_comment",
-        project: "team/project",
-        issueIid: 55,
-        body: "Agent started with codex.",
-      },
-      {
         kind: "remove_reaction",
         target: { kind: "issue_note", project: "team/project", issueIid: 55, noteId: 101 },
         emoji: "eyes",
@@ -373,12 +367,6 @@ describe("createWorker", () => {
         kind: "reaction",
         target: { kind: "mr", project: "team/project", mrIid: 88 },
         emoji: "eyes",
-      },
-      {
-        kind: "mr_comment",
-        project: "team/project",
-        mrIid: 88,
-        body: "Agent started with claude.",
       },
       {
         kind: "remove_reaction",
@@ -835,12 +823,6 @@ describe("createWorker", () => {
     expect(runResult.value?.status).toBe("completed");
     expect(spawnedConfigs).toHaveLength(1);
     expect(spawnedConfigs[0]?.sessionId).toBe("claude-old-review");
-    expect(gitlab.calls[1]).toEqual({
-      kind: "mr_comment",
-      project: "team/project",
-      mrIid: 44,
-      body: "Agent resumed with claude.",
-    });
 
     const latestSessionResult = sessions.findByContext(
       {
@@ -943,12 +925,6 @@ describe("createWorker", () => {
 
     expect(lookupSessionResult.value?.id).toBe(createSessionResult.value.id);
     expect(lookupSessionResult.value?.agentSessionId).toBe("claude-resume-7b");
-    expect(gitlab.calls[1]).toEqual({
-      kind: "mr_comment",
-      project: "team/project",
-      mrIid: 7,
-      body: "Agent resumed with claude.",
-    });
   });
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this test intentionally exercises a long same-context concurrency flow end-to-end.
@@ -1203,101 +1179,6 @@ describe("createWorker", () => {
     });
   });
 
-  it("fails an MR review when the started status comment fails", async () => {
-    const database = createMigratedDatabase(databasePath);
-    const queue = createJobQueue(database);
-    const sessions = createSessionManager(database);
-    const killDeferred = createDeferred<void>();
-    const exitDeferred = createDeferred<Result<AgentResult, AppError>>();
-    let killCount = 0;
-
-    const enqueueResult = queue.enqueue({
-      payload: {
-        kind: "review_mr",
-        project: "team/project",
-        mrIid: 73,
-        sourceBranch: "feature-branch",
-      },
-      idempotencyKey: "mr:73",
-    });
-    expect(enqueueResult.isOk()).toBe(true);
-    if (enqueueResult.isErr()) {
-      return;
-    }
-
-    const worker = createWorker({
-      queue,
-      sessions,
-      gitlab: {
-        addReaction() {
-          return okAsync(1);
-        },
-        clearReaction() {
-          return okAsync(undefined);
-        },
-        removeReaction() {
-          return okAsync(undefined);
-        },
-        postIssueComment() {
-          return okAsync(undefined);
-        },
-        postMRComment() {
-          return fromPromise(Promise.reject(new Error("unreachable")), () =>
-            gitlabError("status comment rejected"),
-          ).map(() => undefined);
-        },
-      },
-      logger: createLogger("fatal"),
-      defaultAgent: "claude",
-      workDir: process.cwd(),
-      gitlabHost: "https://gitlab.example.com",
-      timeoutMs: 60_000,
-      prepareWorkspace,
-      spawnAgent() {
-        return ok({
-          pid: 73,
-          result: exitDeferred.promise,
-          kill() {
-            killCount += 1;
-            return killDeferred.promise;
-          },
-        });
-      },
-    });
-
-    let settled = false;
-    const runPromise = worker.runNextJob().then((result) => {
-      settled = true;
-      return result;
-    });
-
-    await waitForCondition(
-      () => killCount === 1,
-      "Expected worker to kill the MR review agent after startup comment failure",
-    );
-    expect(settled).toBe(false);
-
-    killDeferred.resolve(undefined);
-    exitDeferred.resolve(err(agentError("killed after comment failure", "claude", -1)));
-
-    const runResult = await runPromise;
-    expect(runResult.isErr()).toBe(true);
-    if (runResult.isOk()) {
-      return;
-    }
-
-    expect(runResult.error).toEqual(gitlabError("status comment rejected"));
-
-    const storedJobResult = queue.findByIdempotencyKey("mr:73");
-    expect(storedJobResult.isOk()).toBe(true);
-    if (storedJobResult.isErr()) {
-      return;
-    }
-
-    expect(storedJobResult.value?.status).toBe("failed");
-    expect(storedJobResult.value?.error).toBe("gitlab_error: status comment rejected");
-  });
-
   it("posts a failure status when agent startup fails", async () => {
     const database = createMigratedDatabase(databasePath);
     const queue = createJobQueue(database);
@@ -1376,288 +1257,6 @@ describe("createWorker", () => {
         emoji: "warning",
       },
     ]);
-  });
-
-  it("kills the spawned agent when the started status comment fails", async () => {
-    const database = createMigratedDatabase(databasePath);
-    const queue = createJobQueue(database);
-    const sessions = createSessionManager(database);
-    const killDeferred = createDeferred<void>();
-    const exitDeferred = createDeferred<Result<AgentResult, AppError>>();
-    let killCount = 0;
-
-    const enqueueResult = queue.enqueue({
-      payload: {
-        kind: "handle_mention",
-        project: "team/project",
-        noteId: 818,
-        issueIid: 52,
-        prompt: "Take a look",
-        agentType: "claude",
-        defaultBranch: "main",
-      },
-      idempotencyKey: "note:818",
-    });
-    expect(enqueueResult.isOk()).toBe(true);
-    if (enqueueResult.isErr()) {
-      return;
-    }
-
-    const worker = createWorker({
-      queue,
-      sessions,
-      gitlab: {
-        addReaction() {
-          return okAsync(1);
-        },
-        clearReaction() {
-          return okAsync(undefined);
-        },
-        removeReaction() {
-          return okAsync(undefined);
-        },
-        postIssueComment() {
-          return fromPromise(Promise.reject(new Error("unreachable")), () =>
-            gitlabError("status comment rejected"),
-          ).map(() => undefined);
-        },
-        postMRComment() {
-          return okAsync(undefined);
-        },
-      },
-      logger: createLogger("fatal"),
-      defaultAgent: "codex",
-      workDir: process.cwd(),
-      gitlabHost: "https://gitlab.example.com",
-      timeoutMs: 60_000,
-      prepareWorkspace,
-      spawnAgent() {
-        return ok({
-          pid: 18,
-          result: exitDeferred.promise,
-          kill() {
-            killCount += 1;
-            return killDeferred.promise;
-          },
-        });
-      },
-    });
-
-    let settled = false;
-    const runPromise = worker.runNextJob().then((result) => {
-      settled = true;
-      return result;
-    });
-
-    await waitForCondition(
-      () => killCount === 1,
-      "Expected worker to kill the spawned agent after startup comment failure",
-    );
-    expect(killCount).toBe(1);
-    expect(settled).toBe(false);
-
-    killDeferred.resolve(undefined);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(settled).toBe(false);
-
-    exitDeferred.resolve(err(agentError("killed after comment failure", "claude", -1)));
-
-    const runResult = await runPromise;
-    expect(runResult.isErr()).toBe(true);
-    if (runResult.isOk()) {
-      return;
-    }
-
-    expect(runResult.error).toEqual(gitlabError("status comment rejected"));
-    expect(killCount).toBe(1);
-
-    const storedJobResult = queue.findByIdempotencyKey("note:818");
-    expect(storedJobResult.isOk()).toBe(true);
-    if (storedJobResult.isErr()) {
-      return;
-    }
-
-    expect(storedJobResult.value?.status).toBe("failed");
-    expect(storedJobResult.value?.error).toBe("gitlab_error: status comment rejected");
-  });
-
-  it("leaves a mention job recoverable when shutdown interrupts a started comment failure", async () => {
-    const database = createMigratedDatabase(databasePath);
-    const queue = createJobQueue(database);
-    const sessions = createSessionManager(database);
-    const killDeferred = createDeferred<void>();
-    const exitDeferred = createDeferred<Result<AgentResult, AppError>>();
-    const startedCommentDeferred = createDeferred<void>();
-    let killCount = 0;
-    let startedCommentCalls = 0;
-
-    const enqueueResult = queue.enqueue({
-      payload: {
-        kind: "handle_mention",
-        project: "team/project",
-        noteId: 8181,
-        issueIid: 521,
-        prompt: "Take a look",
-        agentType: "claude",
-        defaultBranch: "main",
-      },
-      idempotencyKey: "note:8181",
-    });
-    expect(enqueueResult.isOk()).toBe(true);
-    if (enqueueResult.isErr()) {
-      return;
-    }
-
-    const worker = createWorker({
-      queue,
-      sessions,
-      gitlab: {
-        addReaction() {
-          return okAsync(1);
-        },
-        clearReaction() {
-          return okAsync(undefined);
-        },
-        removeReaction() {
-          return okAsync(undefined);
-        },
-        postIssueComment() {
-          startedCommentCalls += 1;
-          return fromPromise(startedCommentDeferred.promise, () =>
-            gitlabError("status comment rejected"),
-          ).map(() => undefined);
-        },
-        postMRComment() {
-          return okAsync(undefined);
-        },
-      },
-      logger: createLogger("fatal"),
-      defaultAgent: "codex",
-      workDir: process.cwd(),
-      gitlabHost: "https://gitlab.example.com",
-      timeoutMs: 60_000,
-      prepareWorkspace,
-      spawnAgent() {
-        return ok({
-          pid: 181,
-          result: exitDeferred.promise,
-          kill() {
-            killCount += 1;
-            return killDeferred.promise;
-          },
-        });
-      },
-    });
-
-    const runPromise = worker.runNextJob();
-    await waitForCondition(
-      () => startedCommentCalls === 1,
-      "Expected worker to wait on the started status comment before shutdown",
-    );
-
-    worker.stop();
-    startedCommentDeferred.reject(new Error("comment request failed during shutdown"));
-    await waitForCondition(() => killCount >= 1, "Expected shutdown to kill the spawned agent");
-
-    killDeferred.resolve(undefined);
-    exitDeferred.resolve(err(agentError("terminated during shutdown", "claude", 137)));
-
-    const runResult = await runPromise;
-    expect(runResult.isOk()).toBe(true);
-    if (runResult.isErr()) {
-      return;
-    }
-
-    expect(runResult.value).toBeNull();
-
-    const storedJobResult = queue.findByIdempotencyKey("note:8181");
-    expect(storedJobResult.isOk()).toBe(true);
-    if (storedJobResult.isErr()) {
-      return;
-    }
-
-    expect(storedJobResult.value?.status).toBe("processing");
-    expect(storedJobResult.value?.error).toBeNull();
-  });
-
-  it("handles a synchronous kill failure when the started status comment fails", async () => {
-    const database = createMigratedDatabase(databasePath);
-    const queue = createJobQueue(database);
-    const sessions = createSessionManager(database);
-
-    const enqueueResult = queue.enqueue({
-      payload: {
-        kind: "handle_mention",
-        project: "team/project",
-        noteId: 819,
-        issueIid: 53,
-        prompt: "Take a look",
-        agentType: "claude",
-        defaultBranch: "main",
-      },
-      idempotencyKey: "note:819",
-    });
-    expect(enqueueResult.isOk()).toBe(true);
-    if (enqueueResult.isErr()) {
-      return;
-    }
-
-    const worker = createWorker({
-      queue,
-      sessions,
-      gitlab: {
-        addReaction() {
-          return okAsync(1);
-        },
-        clearReaction() {
-          return okAsync(undefined);
-        },
-        removeReaction() {
-          return okAsync(undefined);
-        },
-        postIssueComment() {
-          return fromPromise(Promise.reject(new Error("unreachable")), () =>
-            gitlabError("status comment rejected"),
-          ).map(() => undefined);
-        },
-        postMRComment() {
-          return okAsync(undefined);
-        },
-      },
-      logger: createLogger("fatal"),
-      defaultAgent: "codex",
-      workDir: process.cwd(),
-      gitlabHost: "https://gitlab.example.com",
-      timeoutMs: 60_000,
-      prepareWorkspace,
-      spawnAgent() {
-        return ok({
-          pid: 19,
-          result: Promise.resolve(err(agentError("already exited", "claude", -1))),
-          kill() {
-            throw new Error("kill failed");
-          },
-        });
-      },
-    });
-
-    const runResult = await worker.runNextJob();
-    expect(runResult.isErr()).toBe(true);
-    if (runResult.isOk()) {
-      return;
-    }
-
-    expect(runResult.error).toEqual(gitlabError("status comment rejected"));
-
-    const storedJobResult = queue.findByIdempotencyKey("note:819");
-    expect(storedJobResult.isOk()).toBe(true);
-    if (storedJobResult.isErr()) {
-      return;
-    }
-
-    expect(storedJobResult.value?.status).toBe("failed");
-    expect(storedJobResult.value?.error).toBe("gitlab_error: status comment rejected");
   });
 
   it("fails the job when persisting failed-run session metadata fails", async () => {
@@ -2387,12 +1986,6 @@ describe("createWorker", () => {
         kind: "reaction",
         target: { kind: "mr_note", project: "team/project", mrIid: 31, noteId: 87 },
         emoji: "eyes",
-      },
-      {
-        kind: "mr_comment",
-        project: "team/project",
-        mrIid: 31,
-        body: "Agent started with claude.",
       },
       {
         kind: "remove_reaction",

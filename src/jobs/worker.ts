@@ -301,10 +301,6 @@ function shouldPersistSession(payload: JobPayload): boolean {
   }
 }
 
-function startCommentBody(agentKind: AgentKind, resumed: boolean): string {
-  return resumed ? `Agent resumed with ${agentKind}.` : `Agent started with ${agentKind}.`;
-}
-
 function successCommentBody(): string {
   return "Agent finished successfully.";
 }
@@ -684,63 +680,6 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       const reviewProcess = spawnResult.value;
       spawnedProcess = reviewProcess;
       activeJobs.set(job.id, reviewProcess);
-
-      const startedCommentResult = await postStatusComment(
-        dependencies.gitlab,
-        payload,
-        startCommentBody(agentKind, resumeSessionId !== null),
-      );
-      if (startedCommentResult.isErr()) {
-        if (!interruptedJobs.has(job.id)) {
-          const killInvocationResult = fromThrowable(
-            () => reviewProcess.kill(),
-            () =>
-              agentError("Failed to terminate agent after startup status failure", agentKind, -1),
-          )();
-          const killResult = killInvocationResult.isErr()
-            ? err(killInvocationResult.error)
-            : await fromPromise(Promise.resolve(killInvocationResult.value), () =>
-                agentError("Failed to terminate agent after startup status failure", agentKind, -1),
-              ).match(
-                () => ok(undefined),
-                (error) => err(error),
-              );
-          if (killResult.isErr()) {
-            dependencies.logger.warn(
-              {
-                error: killResult.error,
-                jobId: job.id,
-                pid: reviewProcess.pid,
-                originalError: startedCommentResult.error,
-              },
-              "Failed to wait for spawned agent shutdown after startup status failure",
-            );
-          }
-        }
-
-        const exitResult = await awaitAgentResult(reviewProcess, agentKind).finally(() => {
-          activeJobs.delete(job.id);
-        });
-        if (exitResult.isErr()) {
-          dependencies.logger.warn(
-            {
-              error: exitResult.error,
-              jobId: job.id,
-              pid: reviewProcess.pid,
-              originalError: startedCommentResult.error,
-            },
-            "Failed while waiting for spawned agent to exit after startup status failure",
-          );
-        }
-
-        if (interruptedJobs.has(job.id)) {
-          await removeAcknowledgmentReaction(jobReaction, job.id);
-          return interruptForShutdown(job.id);
-        }
-
-        await transitionReaction(jobReaction, REACTION_FAILED, job.id);
-        return err(startedCommentResult.error);
-      }
     } else {
       if (shutdownRequested) {
         await removeAcknowledgmentReaction(jobReaction, job.id);
@@ -770,63 +709,6 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       }
 
       activeJobs.set(job.id, spawnResult.value);
-      const startedCommentResult = await postStatusComment(
-        dependencies.gitlab,
-        payload,
-        startCommentBody(agentKind, resumeSessionId !== null),
-      );
-      if (startedCommentResult.isErr()) {
-        if (!interruptedJobs.has(job.id)) {
-          const killInvocationResult = fromThrowable(
-            () => spawnResult.value.kill(),
-            () =>
-              agentError("Failed to terminate agent after startup status failure", agentKind, -1),
-          )();
-          const killResult = killInvocationResult.isErr()
-            ? err(killInvocationResult.error)
-            : await fromPromise(Promise.resolve(killInvocationResult.value), () =>
-                agentError("Failed to terminate agent after startup status failure", agentKind, -1),
-              ).match(
-                () => ok(undefined),
-                (error) => err(error),
-              );
-          if (killResult.isErr()) {
-            dependencies.logger.warn(
-              {
-                error: killResult.error,
-                jobId: job.id,
-                pid: spawnResult.value.pid,
-                originalError: startedCommentResult.error,
-              },
-              "Failed to wait for spawned agent shutdown after startup status failure",
-            );
-          }
-        }
-
-        const exitResult = await awaitAgentResult(spawnResult.value, agentKind).finally(() => {
-          activeJobs.delete(job.id);
-        });
-        if (exitResult.isErr()) {
-          dependencies.logger.warn(
-            {
-              error: exitResult.error,
-              jobId: job.id,
-              pid: spawnResult.value.pid,
-              originalError: startedCommentResult.error,
-            },
-            "Failed while waiting for spawned agent to exit after startup status failure",
-          );
-        }
-
-        if (interruptedJobs.has(job.id)) {
-          await removeAcknowledgmentReaction(jobReaction, job.id);
-          return interruptForShutdown(job.id);
-        }
-
-        await transitionReaction(jobReaction, REACTION_FAILED, job.id);
-        return err(startedCommentResult.error);
-      }
-
       spawnedProcess = spawnResult.value;
     }
 
