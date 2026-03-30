@@ -34,3 +34,7 @@ logs
 
 # serena (local tooling)
 .serena/
+
+.workspaces
+
+tmp/
