@@ -1,10 +1,14 @@
+const { execSync } = require("child_process");
+
+const bunPath = execSync("which bun", { encoding: "utf8" }).trim();
+
 module.exports = {
   apps: [
     {
       name: "glab-review-webhook",
-      script: "/home/coder/.bun/bin/bun",
+      script: bunPath,
       args: "dist/index.js",
-      cwd: "/home/coder/glab-review-webhook",
+      cwd: __dirname,
       env_file: ".env",
       exec_mode: "fork",
       instances: 1,
