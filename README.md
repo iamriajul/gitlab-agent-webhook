@@ -1,128 +1,162 @@
 # glab-review-webhook
 
-GitLab webhook service for handing issue mentions and merge request reviews off to autonomous AI CLIs.
+GitLab webhook service that spawns autonomous AI coding agents (Claude, Codex, Gemini) for code reviews, issue resolution, and MR feedback.
 
-## What It Does
+## How It Works
 
-- Accepts GitLab `Note Hook` events on issues and merge requests.
-- Accepts GitLab `Merge Request Hook` events for MR `open` and `update`.
-- Verifies the webhook secret, parses the payload with Zod, routes supported events, and enqueues a SQLite-backed job.
-- Starts worker lanes on boot. Workers acknowledge work with GitLab reactions/comments, spawn the selected agent CLI, and persist resumable sessions.
+1. GitLab sends webhook events to this service.
+2. The service validates, parses, and routes events into a SQLite-backed job queue.
+3. Worker lanes pick up jobs, clone the repo, checkout the right branch, and spawn an AI agent CLI.
+4. The agent works autonomously — reading issues/MRs, writing code, pushing branches, creating MRs, and posting comments via `glab` CLI.
 
-The service itself only performs service-level GitLab actions through `@gitbeaker/rest`:
+## Triggers
 
-- emoji reactions
-- status comments
+Enable these three webhooks in your GitLab project settings:
 
-Spawned agents are responsible for content-level GitLab work through `glab`:
+- **Comments** — `@agent` mentions in issue/MR comments
+- **Issue events** — assignment to `@agent`, issue close (cleanup)
+- **Merge request events** — MR open/update (auto-review), reviewer/assignee set to `@agent`, MR close/merge (cleanup)
 
-- reading diffs
-- reading discussion context
-- posting review output
-- pushing feature-branch changes
+## Event Flows
 
-## Supported Event Flows
+### Mention in a comment
 
-### Issue or MR mentions
+When a comment mentions `@agent` (configurable via `BOT_USERNAME`):
 
-When a note mentions `@BOT_USERNAME`, the router:
+```
+@agent fix this bug
+@agent codex refactor the auth module
+@agent gemini review this MR
+```
 
-1. Strips the mention and optional leading agent selector.
-2. Builds a queued job.
-3. Returns `202 Accepted` with the queued `jobId`.
+The first token after the mention can optionally select an agent (`claude`, `codex`, `gemini`). Otherwise the configured `DEFAULT_AGENT` is used.
 
-Examples:
+### Issue assigned to @agent
 
-- `@review-bot fix this`
-- `@review-bot codex fix this`
-- `@review-bot gemini review this MR`
+The agent reads the issue, decides whether to implement directly or post a plan first, then creates an MR.
 
-Agent selection only applies when it is the first token after mention stripping. Otherwise the configured default agent is used.
+### MR opened or updated
 
-### Merge request review hooks
+Automatically triggers a code review by the default agent.
 
-`Merge Request Hook` payloads with action `open` or `update` enqueue MR review jobs keyed by project, MR IID, and commit SHA.
+### @agent added as MR reviewer or assignee
 
-## Runtime Behavior
+Triggers a code review (with a unique idempotency key so it's not deduplicated against the auto-review).
 
-- Startup creates the logger, opens SQLite, runs Drizzle migrations, constructs queue/session services, creates the GitLab service, and boots worker lanes.
-- Webhook delivery dedupe uses `Idempotency-Key` when present, otherwise `X-Gitlab-Webhook-UUID`.
-- `GET /health` returns `{ "status": "ok", "requestId": "..." }`.
-- `POST /webhook` returns:
-  - `202` with `status: "accepted"` and a concrete `jobId` when work is queued
-  - `202` with `status: "ignored"` for supported-but-ignored events
-  - `202` with `status: "duplicate"` for duplicate deliveries
-  - `400` for invalid JSON or invalid payloads
-  - `401` for invalid webhook secrets
+### Issue or MR closed/merged
 
-On `SIGINT` and `SIGTERM`, the process stops polling for new work. It does not currently wait for already-running agent processes to drain before exit.
+Workspace directory is deleted and sessions are marked completed. Further `@agent` mentions on closed items receive a blocked reaction.
 
-## Requirements
+## Workspace Management
 
-- Bun
-- Agent CLIs installed locally as needed: `claude`, `codex`, `gemini`
-- `glab` available to spawned agents
+Each issue/MR gets a stable workspace directory:
+
+```
+.workspaces/{project}/issue-{iid}/    # issues
+.workspaces/{project}/mr-{iid}/       # merge requests
+```
+
+On first use, the repo is cloned via `glab repo clone` and the appropriate branch is checked out:
+- **Issues:** `agent/issue-{iid}` (new branch from default)
+- **MRs:** the MR source branch
+
+Subsequent comments reuse the same clone. `--resume` works because the directory persists.
+
+## Reactions
+
+The service communicates status via emoji reactions on the triggering comment:
+
+| Emoji | Meaning |
+|-------|---------|
+| Eyes | Job acknowledged, agent starting |
+| Check mark | Agent finished successfully |
+| X | Agent failed (failure comment also posted) |
+| No entry | Mention blocked (issue/MR is closed) |
+
+## Quick Start
+
+```bash
+cp .env.example .env
+# Edit .env with your GitLab token, webhook secret, host, etc.
+
+make start    # install deps, build, start with PM2
+make logs     # tail logs
+```
+
+### Make Commands
+
+| Command | What it does |
+|---------|-------------|
+| `make start` | Install + build + start with PM2 |
+| `make stop` | Stop the process |
+| `make restart` | Build + restart |
+| `make deploy` | Build + restart (or start) + save PM2 state |
+| `make logs` | Tail all logs |
+| `make logs-err` | Tail stderr only |
+| `make status` | Show PM2 process status |
+| `make build` | Just build |
+| `make clean` | Remove dist |
 
 ## Configuration
 
-Required:
+Required environment variables:
 
-- `GITLAB_WEBHOOK_SECRET`
-- `BOT_USERNAME`
-- `GITLAB_TOKEN`
-- `GITLAB_HOST`
+| Variable | Description |
+|----------|-------------|
+| `GITLAB_WEBHOOK_SECRET` | Secret token configured in GitLab webhook settings |
+| `BOT_USERNAME` | GitLab username to listen for mentions (e.g., `agent`) |
+| `GITLAB_TOKEN` | GitLab personal access token for API calls |
+| `GITLAB_HOST` | GitLab instance URL (e.g., `https://gitlab.example.com`) |
 
 Optional:
 
-- `DEFAULT_AGENT`
-- `PORT`
-- `DATABASE_PATH`
-- `LOG_LEVEL`
-- `WORKER_CONCURRENCY`
-- `AGENT_TIMEOUT_MS`
-- `CLAUDE_PATH`
-- `CODEX_PATH`
-- `GEMINI_PATH`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEFAULT_AGENT` | `claude` | Agent CLI to use (`claude`, `codex`, `gemini`) |
+| `PORT` | `3000` | HTTP server port |
+| `DATABASE_PATH` | `./data/glab-review.db` | SQLite database path |
+| `LOG_LEVEL` | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`, `fatal`) |
+| `WORKER_CONCURRENCY` | `2` | Number of parallel worker lanes |
+| `AGENT_TIMEOUT_MS` | `600000` | Agent process timeout (10 minutes) |
+| `CLAUDE_PATH` | `claude` | Path to Claude CLI binary |
+| `CODEX_PATH` | `codex` | Path to Codex CLI binary |
+| `GEMINI_PATH` | `gemini` | Path to Gemini CLI binary |
 
-See [`.env.example`](/var/tmp/vibe-kanban/worktrees/1df9-task-06-integrat/glab-review-webhook/.env.example) if present in your checkout and [`src/config/config.ts`](/var/tmp/vibe-kanban/worktrees/1df9-task-06-integrat/glab-review-webhook/src/config/config.ts).
+See `.env.example` for a template.
 
 ## Development
 
-Install dependencies, then:
-
 ```bash
-bun run dev
+bun install
+bun run dev       # start dev server
+bun test          # run tests
+bun run check     # typecheck + lint + test
+bun run format    # auto-format with Biome
 ```
 
-Useful commands:
+## Architecture
 
-- `bun test`
-- `bun run check`
-- `bun run format`
-- `bun run build`
-
-## Testing Webhooks Locally
-
-Issue note example:
-
-```bash
-curl -s -X POST http://localhost:3000/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-Gitlab-Event: Note Hook" \
-  -H "X-Gitlab-Token: $GITLAB_WEBHOOK_SECRET" \
-  -H "X-Gitlab-Webhook-UUID: test-$(date +%s)" \
-  -H "Idempotency-Key: test-idempotency-$(date +%s)" \
-  -d '{
-    "object_kind": "note",
-    "user": {"id": 1, "username": "dev", "name": "Developer"},
-    "project": {"id": 5, "path_with_namespace": "team/project", "web_url": "https://gitlab.example.com/team/project", "default_branch": "main"},
-    "object_attributes": {"id": 100, "note": "@review-bot codex fix this bug", "noteable_type": "Issue", "noteable_id": 42, "action": "create", "url": "https://gitlab.example.com/team/project/issues/42#note_100", "system": false},
-    "issue": {"id": 42, "iid": 17, "title": "Bug report", "description": "Crashes on login", "state": "opened"}
-  }'
+```
+src/
+  index.ts              Entry point (Bun.serve + workspace management)
+  server/               HTTP layer: routes, middleware (auth, request-id)
+  events/               Webhook parsing (Zod), routing, mention detection
+  agents/               CLI spawning: runner, adapters (claude, codex, gemini)
+  jobs/                 SQLite-backed queue + worker orchestration
+  gitlab/               Service-level GitLab ops (reactions, comments via @gitbeaker/rest)
+  sessions/             Agent session tracking for --resume support
+  db/                   Drizzle ORM: schema, migrations
+  config/               Zod-validated env config, constants, logger (pino)
+  types/                Result types (neverthrow), errors, branded IDs
 ```
 
-Health check:
+The service has two GitLab interaction layers:
+- **Upper layer (this service):** Uses `@gitbeaker/rest` for reactions and status comments only.
+- **Lower layer (spawned agents):** Uses `glab` CLI autonomously for all content work — reading diffs, posting reviews, pushing code, creating MRs.
 
-```bash
-curl -s http://localhost:3000/health
-```
+## Requirements
+
+- [Bun](https://bun.sh)
+- Agent CLIs as needed: `claude`, `codex`, `gemini`
+- [`glab`](https://gitlab.com/gitlab-org/cli) CLI configured with access to your GitLab instance
+- SSH access for git clone (configured via `glab` git protocol settings)
