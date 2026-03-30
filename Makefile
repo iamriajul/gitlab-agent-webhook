@@ -1,32 +1,37 @@
 APP = glab-review-webhook
+PM2 = ./node_modules/.bin/pm2
 
-.PHONY: build start stop restart logs logs-err status deploy clean
+.PHONY: setup build start stop restart logs logs-err status deploy clean
 
-build:
+setup:
+	bun install
+	@test -f .env || { echo "ERROR: .env file missing. Copy .env.example and fill in values."; exit 1; }
+
+build: setup
 	bun run build
 
 start: build
 	mkdir -p logs data
-	pm2 start ecosystem.config.cjs
+	$(PM2) start ecosystem.config.cjs
 
 stop:
-	pm2 stop $(APP)
+	$(PM2) stop $(APP)
 
 restart: build
-	pm2 restart $(APP)
+	$(PM2) restart $(APP)
 
 logs:
-	pm2 logs $(APP)
+	$(PM2) logs $(APP)
 
 logs-err:
-	pm2 logs $(APP) --err
+	$(PM2) logs $(APP) --err
 
 status:
-	pm2 status $(APP)
+	$(PM2) status $(APP)
 
 deploy: build
-	pm2 restart $(APP) || pm2 start ecosystem.config.cjs
-	pm2 save
+	$(PM2) restart $(APP) || $(PM2) start ecosystem.config.cjs
+	$(PM2) save
 
 clean:
-	rm -rf dist logs/.pm2*
+	rm -rf dist
