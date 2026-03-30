@@ -170,7 +170,7 @@ function parseIssueHook(body: unknown): Result<WebhookEvent, AppError> {
   if (action === "close") {
     return ok({ kind: "issue_closed", payload: result.data });
   }
-  if (action === "update") {
+  if (action === "open" || action === "update") {
     return ok({ kind: "issue_assigned", payload: result.data });
   }
 
