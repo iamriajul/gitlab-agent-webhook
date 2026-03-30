@@ -58,7 +58,7 @@ function formatUnknownError(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function sanitizePathSegment(value: string): string {
+export function sanitizePathSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-");
 }
 
@@ -443,7 +443,19 @@ export function createRuntime(config: Config): Result<AppRuntime, AppError> {
     spawnAgent,
   });
 
-  const app = createApp(config, logger, new Map(), {}, { enqueueJob: queue.enqueue.bind(queue) });
+  const app = createApp(
+    config,
+    logger,
+    new Map(),
+    {},
+    {
+      enqueueJob: queue.enqueue.bind(queue),
+      addReaction: gitlab.addReaction.bind(gitlab),
+      closeSessionsByContext: (contextKind, project, iid) =>
+        sessions.closeByContext(contextKind, project, iid),
+      workDir,
+    },
+  );
   const stopWorkerLanes = startWorkerLanes(worker, logger, config.workerConcurrency);
   const stopWorkers = async () => {
     worker.stop();

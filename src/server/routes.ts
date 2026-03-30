@@ -1,13 +1,18 @@
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
 import type { Config } from "../config/config.ts";
 import { WEBHOOK_HEADER_EVENT, WEBHOOK_HEADER_IDEMPOTENCY } from "../config/constants.ts";
 import type { Logger } from "../config/logger.ts";
 import { parseWebhookPayload } from "../events/parser.ts";
 import { type RoutingDecision, routeEvent } from "../events/router.ts";
+import type { ReactionTarget } from "../gitlab/service.ts";
+import { sanitizePathSegment } from "../index.ts";
 import type { EnqueueJobInput } from "../jobs/queue.ts";
 import type { Job } from "../jobs/types.ts";
 import type { AppError } from "../types/errors.ts";
-import type { Result } from "../types/result.ts";
+import type { EmojiName, WebhookEvent } from "../types/events.ts";
+import type { Result, ResultAsync } from "../types/result.ts";
 import { authMiddleware, requestIdMiddleware } from "./middleware.ts";
 
 type DeliveryStore = Map<string, number>;
@@ -19,6 +24,16 @@ type AppOptions = {
 
 export interface AppDependencies {
   readonly enqueueJob?: (input: EnqueueJobInput) => Result<Job, AppError>;
+  readonly addReaction?: (
+    target: ReactionTarget,
+    emoji: EmojiName,
+  ) => ResultAsync<number, AppError>;
+  readonly closeSessionsByContext?: (
+    contextKind: "issue" | "mr",
+    project: string,
+    iid: number,
+  ) => Result<number, AppError>;
+  readonly workDir?: string;
 }
 
 const DEFAULT_DEDUPE_TTL_MS = 60 * 60 * 1000;
@@ -95,6 +110,135 @@ function enqueueRoutedJob(
   );
 }
 
+function cleanupWorkspace(
+  project: string,
+  target: "issue" | "mr",
+  iid: number,
+  workDir: string,
+  logger: Logger,
+): void {
+  const projectDir = sanitizePathSegment(project);
+  const suffix = target === "issue" ? `issue-${iid}` : `mr-${iid}`;
+  const workspacePath = join(workDir, projectDir, suffix);
+  try {
+    rmSync(workspacePath, { recursive: true, force: true });
+    logger.info({ workspacePath }, "Workspace cleaned up");
+  } catch (cause) {
+    logger.warn({ workspacePath, error: cause }, "Failed to clean up workspace");
+  }
+}
+
+async function handleBlockedDecision(
+  requestId: string,
+  decision: Extract<RoutingDecision, { readonly kind: "blocked" }>,
+  requestLogger: Logger,
+  dependencies: AppDependencies,
+): Promise<Response> {
+  requestLogger.info({ reason: decision.reason }, "Mention blocked on closed item");
+  if (dependencies.addReaction !== undefined) {
+    const reactionResult = await dependencies.addReaction(
+      decision.target as ReactionTarget,
+      "no_entry_sign",
+    );
+    if (reactionResult.isErr()) {
+      requestLogger.warn({ error: reactionResult.error }, "Failed to add blocked reaction");
+    }
+  }
+  return jsonResponse(requestId, 202, { status: "blocked", reason: decision.reason });
+}
+
+function handleCleanupDecision(
+  requestId: string,
+  decision: Extract<RoutingDecision, { readonly kind: "cleanup" }>,
+  requestLogger: Logger,
+  dependencies: AppDependencies,
+): Response {
+  requestLogger.info(
+    { project: decision.project, target: decision.target, iid: decision.iid },
+    "Running cleanup for closed item",
+  );
+  if (dependencies.workDir !== undefined) {
+    cleanupWorkspace(
+      decision.project,
+      decision.target,
+      decision.iid,
+      dependencies.workDir,
+      requestLogger,
+    );
+  }
+  if (dependencies.closeSessionsByContext !== undefined) {
+    const closeResult = dependencies.closeSessionsByContext(
+      decision.target,
+      decision.project,
+      decision.iid,
+    );
+    if (closeResult.isErr()) {
+      requestLogger.warn({ error: closeResult.error }, "Failed to close sessions");
+    } else {
+      requestLogger.info({ closed: closeResult.value }, "Sessions closed");
+    }
+  }
+  return jsonResponse(requestId, 202, { status: "cleaned" });
+}
+
+function handleDecision(
+  requestId: string,
+  decision: RoutingDecision,
+  deliveryKey: string,
+  deliveryStore: DeliveryStore,
+  requestLogger: Logger,
+  dependencies: AppDependencies,
+): Response | Promise<Response> {
+  switch (decision.kind) {
+    case "ignore":
+      requestLogger.info({ reason: decision.reason }, "Webhook event ignored during routing");
+      return jsonResponse(requestId, 202, { status: "ignored", reason: decision.reason });
+    case "blocked":
+      return handleBlockedDecision(requestId, decision, requestLogger, dependencies);
+    case "cleanup":
+      return handleCleanupDecision(requestId, decision, requestLogger, dependencies);
+    case "enqueue":
+      return enqueueRoutedJob(
+        requestId,
+        decision,
+        deliveryKey,
+        deliveryStore,
+        requestLogger,
+        dependencies,
+      );
+  }
+}
+
+function parseBody(
+  requestId: string,
+  eventType: string,
+  body: unknown,
+  requestLogger: Logger,
+): Response | { readonly event: Exclude<WebhookEvent, { readonly kind: "ignored" }> } {
+  const parseResult = parseWebhookPayload(eventType, body);
+  if (parseResult.isErr()) {
+    requestLogger.warn({ error: parseResult.error }, "Failed to parse webhook payload");
+    return Response.json(
+      {
+        status: "error",
+        error: { code: "invalid_payload", message: parseResult.error.message },
+        requestId,
+      },
+      { status: 400, headers: { "x-request-id": requestId } },
+    );
+  }
+
+  if (parseResult.value.kind === "ignored") {
+    requestLogger.info({ reason: parseResult.value.reason }, "Webhook event ignored");
+    return jsonResponse(requestId, 202, {
+      status: "ignored",
+      reason: parseResult.value.reason,
+    });
+  }
+
+  return { event: parseResult.value };
+}
+
 export function createApp(
   config: Config,
   logger: Logger,
@@ -134,25 +278,9 @@ export function createApp(
       });
     }
 
-    const parseResult = parseWebhookPayload(eventType, body);
-    if (parseResult.isErr()) {
-      requestLogger.warn({ error: parseResult.error }, "Failed to parse webhook payload");
-      return Response.json(
-        {
-          status: "error",
-          error: { code: "invalid_payload", message: parseResult.error.message },
-          requestId,
-        },
-        { status: 400, headers: { "x-request-id": requestId } },
-      );
-    }
-
-    if (parseResult.value.kind === "ignored") {
-      requestLogger.info({ reason: parseResult.value.reason }, "Webhook event ignored");
-      return jsonResponse(requestId, 202, {
-        status: "ignored",
-        reason: parseResult.value.reason,
-      });
+    const parsed = parseBody(requestId, eventType, body, requestLogger);
+    if (parsed instanceof Response) {
+      return parsed;
     }
 
     pruneExpiredDeliveries(deliveryStore, now(), dedupeTtlMs);
@@ -165,38 +293,17 @@ export function createApp(
     deliveryStore.set(deliveryKey, now());
 
     const routeResult = routeEvent(
-      parseResult.value,
-      {
-        botUsername: config.botUsername,
-        defaultAgent: config.defaultAgent,
-      },
+      parsed.event,
+      { botUsername: config.botUsername, defaultAgent: config.defaultAgent },
       requestLogger,
     );
     if (routeResult.isErr()) {
       deliveryStore.delete(deliveryKey);
       requestLogger.error({ error: routeResult.error }, "Failed to route event");
-      return Response.json(
-        {
-          status: "error",
-          error: { code: "internal_error", message: routeResult.error.message },
-          requestId,
-        },
-        { status: 500, headers: { "x-request-id": requestId } },
-      );
+      return errorResponse(requestId, 500, routeResult.error.message);
     }
 
-    if (routeResult.value.kind === "ignore") {
-      requestLogger.info(
-        { reason: routeResult.value.reason },
-        "Webhook event ignored during routing",
-      );
-      return jsonResponse(requestId, 202, {
-        status: "ignored",
-        reason: routeResult.value.reason,
-      });
-    }
-
-    return enqueueRoutedJob(
+    return handleDecision(
       requestId,
       routeResult.value,
       deliveryKey,

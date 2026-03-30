@@ -101,6 +101,8 @@ function createMergeRequestEvent(kind: "mr_opened" | "mr_updated"): WebhookEvent
         url: "https://gitlab.example.com/team/project/-/commit/abc123",
       },
     },
+    reviewers: [],
+    assignees: [],
   };
 
   return { kind, payload };

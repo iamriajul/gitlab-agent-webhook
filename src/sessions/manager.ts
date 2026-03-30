@@ -63,6 +63,11 @@ export interface SessionManager {
     id: SessionId,
     status: "completed" | "failed",
   ): Result<AgentSession, ReturnType<typeof sessionError>>;
+  closeByContext(
+    contextKind: "issue" | "mr" | "mr_review",
+    project: string,
+    iid: number,
+  ): Result<number, ReturnType<typeof sessionError>>;
 }
 
 function formatUnknownError(cause: unknown): string {
@@ -251,6 +256,37 @@ export function createSessionManager(database: AppDatabase): SessionManager {
           return tx.select().from(sessions).where(eq(sessions.id, id)).get();
         }),
       ).andThen((row) => requireSession(row, id).andThen(mapSession));
+    },
+
+    closeByContext(contextKind, project, iid) {
+      return runDatabaseOperation(() => {
+        database
+          .update(sessions)
+          .set({ status: "completed", lastActivityAt: new Date().toISOString() })
+          .where(
+            and(
+              eq(sessions.contextKind, contextKind),
+              eq(sessions.contextProject, project),
+              eq(sessions.contextIid, iid),
+              eq(sessions.status, "active"),
+            ),
+          )
+          .run();
+
+        const remaining = database
+          .select()
+          .from(sessions)
+          .where(
+            and(
+              eq(sessions.contextKind, contextKind),
+              eq(sessions.contextProject, project),
+              eq(sessions.contextIid, iid),
+              eq(sessions.status, "completed"),
+            ),
+          )
+          .all();
+        return remaining.length;
+      });
     },
   };
 }

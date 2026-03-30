@@ -81,6 +81,25 @@ const MergeRequestHookPayload = z.object({
   user: UserSchema,
   project: ProjectSchema,
   object_attributes: MRAttributesSchema,
+  reviewers: z.array(UserSchema).optional().default([]),
+  assignees: z.array(UserSchema).optional().default([]),
+});
+
+const IssueAttributesSchema = z.object({
+  id: z.number(),
+  iid: z.number(),
+  title: z.string(),
+  description: z.string().nullable(),
+  state: z.string(),
+  action: z.string(),
+});
+
+const IssueHookPayloadSchema = z.object({
+  object_kind: z.literal("issue"),
+  user: UserSchema,
+  project: ProjectSchema,
+  object_attributes: IssueAttributesSchema,
+  assignees: z.array(UserSchema).optional().default([]),
 });
 
 export type NoteOnIssuePayload = z.infer<typeof NoteHookPayload> & {
@@ -94,6 +113,7 @@ export type NoteOnMRPayload = z.infer<typeof NoteHookPayload> & {
 };
 
 export type MergeRequestPayload = z.infer<typeof MergeRequestHookPayload>;
+export type IssueHookPayload = z.infer<typeof IssueHookPayloadSchema>;
 
 function parseNoteHook(body: unknown): Result<WebhookEvent, AppError> {
   const result = NoteHookPayload.safeParse(body);
@@ -133,8 +153,28 @@ function parseMergeRequestHook(body: unknown): Result<WebhookEvent, AppError> {
   if (action === "update") {
     return ok({ kind: "mr_updated", payload: result.data });
   }
+  if (action === "close" || action === "merge") {
+    return ok({ kind: "mr_closed", payload: result.data });
+  }
 
   return ok({ kind: "ignored", reason: `Unhandled MR action: ${action}` });
+}
+
+function parseIssueHook(body: unknown): Result<WebhookEvent, AppError> {
+  const result = IssueHookPayloadSchema.safeParse(body);
+  if (!result.success) {
+    return err(parseError(`Invalid Issue Hook payload: ${result.error.message}`));
+  }
+  const action = result.data.object_attributes.action;
+
+  if (action === "close") {
+    return ok({ kind: "issue_closed", payload: result.data });
+  }
+  if (action === "update") {
+    return ok({ kind: "issue_assigned", payload: result.data });
+  }
+
+  return ok({ kind: "ignored", reason: `Unhandled issue action: ${action}` });
 }
 
 export function parseWebhookPayload(
@@ -146,6 +186,9 @@ export function parseWebhookPayload(
   }
   if (eventType === "Merge Request Hook") {
     return parseMergeRequestHook(body);
+  }
+  if (eventType === "Issue Hook") {
+    return parseIssueHook(body);
   }
   return ok({ kind: "ignored", reason: `Unhandled event type: ${eventType}` });
 }
