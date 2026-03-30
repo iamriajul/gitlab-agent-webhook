@@ -95,7 +95,7 @@ const IssueAttributesSchema = z.object({
 });
 
 const IssueHookPayloadSchema = z.object({
-  object_kind: z.literal("issue"),
+  object_kind: z.literal("issue").optional(),
   user: UserSchema,
   project: ProjectSchema,
   object_attributes: IssueAttributesSchema,
