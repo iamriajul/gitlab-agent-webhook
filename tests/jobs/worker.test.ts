@@ -149,6 +149,7 @@ async function waitForCondition(
 function prepareWorkspace(
   _payload: Job["payload"],
   baseWorkDir: string,
+  _gitlabHost: string,
   preparedWorkDir = baseWorkDir,
 ) {
   return ok(preparedWorkDir);
@@ -171,6 +172,7 @@ describe("createWorker", () => {
         issueIid: 55,
         prompt: "Fix the flaky test",
         agentType: "codex",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:101",
     });
@@ -186,11 +188,17 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       env: TEST_AGENT_ENV,
       timeoutMs: 60_000,
-      prepareWorkspace(payload, baseWorkDir) {
+      prepareWorkspace(payload, baseWorkDir, gitlabHost) {
         preparedWorkspaces.push(`${payload.project}::${baseWorkDir}`);
-        return prepareWorkspace(payload, baseWorkDir, join(baseWorkDir, "prepared", "issue-55"));
+        return prepareWorkspace(
+          payload,
+          baseWorkDir,
+          gitlabHost,
+          join(baseWorkDir, "prepared", "issue-55"),
+        );
       },
       spawnAgent(config) {
         spawnedConfigs.push(config);
@@ -294,7 +302,12 @@ describe("createWorker", () => {
     const spawnedConfigs: AgentConfig[] = [];
 
     const enqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 88 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 88,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:team/project:88",
     });
     expect(enqueueResult.isOk()).toBe(true);
@@ -309,6 +322,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent(config) {
@@ -395,7 +409,12 @@ describe("createWorker", () => {
     const clearedReactions: EmojiName[] = [];
 
     const enqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 89 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 89,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:team/project:89",
     });
     expect(enqueueResult.isOk()).toBe(true);
@@ -434,6 +453,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent(config) {
@@ -478,6 +498,7 @@ describe("createWorker", () => {
         issueIid: 89,
         prompt: "Take a look",
         agentType: "claude",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:777",
     });
@@ -517,6 +538,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent(config) {
@@ -553,7 +575,12 @@ describe("createWorker", () => {
     const addedReactions: EmojiName[] = [];
 
     const enqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 90 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 90,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:team/project:90",
     });
     expect(enqueueResult.isOk()).toBe(true);
@@ -586,6 +613,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -622,7 +650,12 @@ describe("createWorker", () => {
     const spawnedConfigs: AgentConfig[] = [];
 
     const firstEnqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 92 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 92,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:team/project:92:sha-a",
     });
     expect(firstEnqueueResult.isOk()).toBe(true);
@@ -631,7 +664,12 @@ describe("createWorker", () => {
     }
 
     const secondEnqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 92 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 92,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:team/project:92:sha-b",
     });
     expect(secondEnqueueResult.isOk()).toBe(true);
@@ -640,7 +678,12 @@ describe("createWorker", () => {
     }
 
     const thirdEnqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 93 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 93,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:team/project:93:sha-a",
     });
     expect(thirdEnqueueResult.isOk()).toBe(true);
@@ -655,6 +698,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent(config) {
@@ -723,6 +767,7 @@ describe("createWorker", () => {
       kind: "review_mr",
       project: "team/project",
       mrIid: 93,
+      sourceBranch: "feature-branch",
     });
   });
 
@@ -744,7 +789,12 @@ describe("createWorker", () => {
     }
 
     const enqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 44 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 44,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:team/project:44:commit:abc123",
     });
     expect(enqueueResult.isOk()).toBe(true);
@@ -759,6 +809,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent(config) {
@@ -838,6 +889,7 @@ describe("createWorker", () => {
         mrIid: 7,
         prompt: "Please continue with the previous fixes",
         agentType: "claude",
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr-note:301",
     });
@@ -853,6 +905,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent(config) {
@@ -916,6 +969,7 @@ describe("createWorker", () => {
         mrIid: 93,
         prompt: "first follow-up",
         agentType: "codex",
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr-note:301",
     });
@@ -932,6 +986,7 @@ describe("createWorker", () => {
         mrIid: 93,
         prompt: "second follow-up",
         agentType: "codex",
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr-note:302",
     });
@@ -947,6 +1002,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent(config) {
@@ -1071,6 +1127,7 @@ describe("createWorker", () => {
         issueIid: 99,
         prompt: "Try again",
         agentType: "codex",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:909",
     });
@@ -1086,6 +1143,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1154,7 +1212,12 @@ describe("createWorker", () => {
     let killCount = 0;
 
     const enqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 73 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 73,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:73",
     });
     expect(enqueueResult.isOk()).toBe(true);
@@ -1187,6 +1250,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1248,6 +1312,7 @@ describe("createWorker", () => {
         mrIid: 52,
         prompt: "Take a look",
         agentType: "claude",
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr-note:808",
     });
@@ -1263,6 +1328,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1328,6 +1394,7 @@ describe("createWorker", () => {
         issueIid: 52,
         prompt: "Take a look",
         agentType: "claude",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:818",
     });
@@ -1361,6 +1428,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1432,6 +1500,7 @@ describe("createWorker", () => {
         issueIid: 521,
         prompt: "Take a look",
         agentType: "claude",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:8181",
     });
@@ -1466,6 +1535,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1524,6 +1594,7 @@ describe("createWorker", () => {
         issueIid: 53,
         prompt: "Take a look",
         agentType: "claude",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:819",
     });
@@ -1557,6 +1628,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1619,6 +1691,7 @@ describe("createWorker", () => {
         issueIid: 18,
         prompt: "run it again",
         agentType: "codex",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:334",
     });
@@ -1634,6 +1707,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1685,7 +1759,12 @@ describe("createWorker", () => {
     let mrCommentCount = 0;
 
     const enqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 64 },
+      payload: {
+        kind: "review_mr",
+        project: "team/project",
+        mrIid: 64,
+        sourceBranch: "feature-branch",
+      },
       idempotencyKey: "mr:64",
     });
     expect(enqueueResult.isOk()).toBe(true);
@@ -1721,6 +1800,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1773,6 +1853,7 @@ describe("createWorker", () => {
         issueIid: 64,
         prompt: "fix it",
         agentType: "codex",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:820",
     });
@@ -1788,6 +1869,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1851,6 +1933,7 @@ describe("createWorker", () => {
         mrIid: 99,
         prompt: "continue",
         agentType: "claude",
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr-note:899",
     });
@@ -1866,6 +1949,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1909,6 +1993,7 @@ describe("createWorker", () => {
         issueIid: 12,
         prompt: "Fix it",
         agentType: "codex",
+        defaultBranch: "main",
       },
       status: "processing",
       createdAt: new Date("2026-03-21T00:00:00.000Z"),
@@ -1964,6 +2049,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -1999,6 +2085,7 @@ describe("createWorker", () => {
         issueIid: 13,
         prompt: "Fix it",
         agentType: "codex",
+        defaultBranch: "main",
       },
       status: "processing",
       createdAt: new Date("2026-03-21T00:00:00.000Z"),
@@ -2052,6 +2139,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -2099,6 +2187,7 @@ describe("createWorker", () => {
         mrIid: 14,
         prompt: "continue",
         agentType: "claude",
+        sourceBranch: "feature-branch",
       },
       status: "processing",
       createdAt: new Date("2026-03-21T00:00:00.000Z"),
@@ -2161,6 +2250,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -2214,6 +2304,7 @@ describe("createWorker", () => {
         mrIid: 31,
         prompt: "continue",
         agentType: "claude",
+        sourceBranch: "feature-branch",
       },
       status: "processing",
       createdAt: new Date("2026-03-21T00:00:00.000Z"),
@@ -2267,6 +2358,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -2336,6 +2428,7 @@ describe("createWorker", () => {
         mrIid: 19,
         prompt: "continue",
         agentType: "claude",
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr-note:901",
     });
@@ -2372,6 +2465,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -2421,6 +2515,7 @@ describe("createWorker", () => {
         issueIid: 500,
         prompt: "continue",
         agentType: "codex",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:500",
     });
@@ -2457,6 +2552,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -2500,6 +2596,7 @@ describe("createWorker", () => {
         issueIid: 17,
         prompt: "run it",
         agentType: "codex",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:333",
     });
@@ -2515,6 +2612,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -2599,6 +2697,7 @@ describe("createWorker", () => {
         mrIid: 12,
         prompt: "continue from the previous attempt",
         agentType: "gemini",
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr-note:612",
     });
@@ -2614,6 +2713,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent(config) {
@@ -2666,6 +2766,7 @@ describe("createWorker", () => {
         issueIid: 44,
         prompt: "continue from the previous attempt",
         agentType: "gemini",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:744",
     });
@@ -2681,6 +2782,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -2745,6 +2847,7 @@ describe("createWorker", () => {
           mrIid: 22,
           prompt: "check env",
           agentType: "codex",
+          sourceBranch: "feature-branch",
         },
         idempotencyKey: "mr-note:999",
       });
@@ -2760,6 +2863,7 @@ describe("createWorker", () => {
         logger: createLogger("fatal"),
         defaultAgent: "claude",
         workDir: process.cwd(),
+        gitlabHost: "https://gitlab.example.com",
         timeoutMs: 60_000,
         prepareWorkspace,
         spawnAgent(config) {
@@ -2783,10 +2887,7 @@ describe("createWorker", () => {
       }
 
       expect(spawnedConfigs).toHaveLength(1);
-      expect(spawnedConfigs[0]?.env["CODEX_API_KEY"]).toBe("codex-api-key");
-      expect(spawnedConfigs[0]?.env["GITLAB_TOKEN"]).toBe("worker-token");
-      expect(spawnedConfigs[0]?.env["GITLAB_WEBHOOK_SECRET"]).toBeUndefined();
-      expect(spawnedConfigs[0]?.env["PATH"]).toBe(process.env["PATH"]);
+      expect(spawnedConfigs[0]?.env).toEqual({});
     } finally {
       if (previousCodexApiKey === undefined) {
         delete process.env["CODEX_API_KEY"];
@@ -2829,6 +2930,7 @@ describe("createWorker", () => {
           mrIid: 23,
           prompt: "check merged env",
           agentType: "codex",
+          sourceBranch: "feature-branch",
         },
         idempotencyKey: "mr-note:1001",
       });
@@ -2844,6 +2946,7 @@ describe("createWorker", () => {
         logger: createLogger("fatal"),
         defaultAgent: "claude",
         workDir: process.cwd(),
+        gitlabHost: "https://gitlab.example.com",
         timeoutMs: 60_000,
         env: {
           EXTRA_FLAG: "enabled",
@@ -2871,9 +2974,6 @@ describe("createWorker", () => {
 
       expect(spawnedConfigs).toHaveLength(1);
       expect(spawnedConfigs[0]?.env["EXTRA_FLAG"]).toBe("enabled");
-      expect(spawnedConfigs[0]?.env["CODEX_API_KEY"]).toBe("codex-api-key");
-      expect(spawnedConfigs[0]?.env["GITLAB_TOKEN"]).toBe("worker-token");
-      expect(spawnedConfigs[0]?.env["PATH"]).toBe(process.env["PATH"]);
     } finally {
       if (previousCodexApiKey === undefined) {
         delete process.env["CODEX_API_KEY"];
@@ -2901,6 +3001,7 @@ describe("createWorker", () => {
         kind: "review_mr",
         project: "team/project",
         mrIid: 91,
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr:91",
     });
@@ -2916,8 +3017,9 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
-      prepareWorkspace() {
+      prepareWorkspace(_payload, _baseWorkDir, _gitlabHost) {
         return err(queueError("workspace unavailable"));
       },
       spawnAgent() {
@@ -2989,6 +3091,7 @@ describe("createWorker", () => {
         issueIid: 52,
         prompt: "Take a look",
         agentType: "claude",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:999",
     });
@@ -3028,6 +3131,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -3112,6 +3216,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "codex",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {
@@ -3150,6 +3255,7 @@ describe("createWorker", () => {
         kind: "review_mr",
         project: "team/project",
         mrIid: 120,
+        sourceBranch: "feature-branch",
       },
       idempotencyKey: "mr:120",
     });
@@ -3185,6 +3291,7 @@ describe("createWorker", () => {
       logger: createLogger("fatal"),
       defaultAgent: "claude",
       workDir: process.cwd(),
+      gitlabHost: "https://gitlab.example.com",
       timeoutMs: 60_000,
       prepareWorkspace,
       spawnAgent() {

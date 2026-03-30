@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { spawnAgent } from "./agents/runner.ts";
@@ -175,22 +175,65 @@ export function acquireRuntimeLease(
   return acquireRuntimeLease(leasePath, processAlive, ownerPid);
 }
 
-function workspaceSuffix(payload: JobPayload): string {
+export function workspaceSuffix(payload: JobPayload): string {
   switch (payload.kind) {
     case "handle_mention":
-      return `issue-${payload.issueIid}-note-${payload.noteId}`;
+      return `issue-${payload.issueIid}`;
     case "handle_mr_mention":
-      return `mr-${payload.mrIid}-note-${payload.noteId}`;
+      return `mr-${payload.mrIid}`;
     case "review_mr":
-      return `mr-${payload.mrIid}-review`;
+      return `mr-${payload.mrIid}`;
   }
 }
 
-function prepareWorkspace(payload: JobPayload, baseWorkDir: string): Result<string, AppError> {
+function branchForPayload(payload: JobPayload): {
+  readonly name: string;
+  readonly create: boolean;
+} {
+  switch (payload.kind) {
+    case "handle_mention":
+      return { name: `agent/issue-${payload.issueIid}`, create: true };
+    case "handle_mr_mention":
+      return { name: payload.sourceBranch, create: false };
+    case "review_mr":
+      return { name: payload.sourceBranch, create: false };
+  }
+}
+
+export function prepareWorkspace(
+  payload: JobPayload,
+  baseWorkDir: string,
+  gitlabHost: string,
+): Result<string, AppError> {
   try {
     const projectDir = sanitizePathSegment(payload.project);
-    const workDir = join(baseWorkDir, projectDir, workspaceSuffix(payload), crypto.randomUUID());
+    const workDir = join(baseWorkDir, projectDir, workspaceSuffix(payload));
     mkdirSync(workDir, { recursive: true });
+
+    const gitDir = join(workDir, ".git");
+    if (!existsSync(gitDir)) {
+      const cloneResult = Bun.spawnSync(["glab", "repo", "clone", payload.project, "."], {
+        cwd: workDir,
+        env: { ...process.env, GITLAB_HOST: gitlabHost },
+      });
+      if (cloneResult.exitCode !== 0) {
+        const stderr = cloneResult.stderr.toString().trim();
+        return err(queueError(`Failed to clone repository: ${stderr || "unknown error"}`));
+      }
+
+      const branch = branchForPayload(payload);
+      const checkoutArgs = branch.create
+        ? ["git", "checkout", "-b", branch.name]
+        : ["git", "checkout", branch.name];
+      const checkoutResult = Bun.spawnSync(checkoutArgs, { cwd: workDir });
+      if (checkoutResult.exitCode !== 0) {
+        const stderr = checkoutResult.stderr.toString().trim();
+        return err(
+          queueError(`Failed to checkout branch ${branch.name}: ${stderr || "unknown error"}`),
+        );
+      }
+    }
+
     return ok(workDir);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
@@ -393,6 +436,7 @@ export function createRuntime(config: Config): Result<AppRuntime, AppError> {
     logger,
     defaultAgent: config.defaultAgent,
     workDir,
+    gitlabHost: config.gitlabHost,
     prepareWorkspace,
     env: createWorkerEnv(config),
     timeoutMs: config.agentTimeoutMs,

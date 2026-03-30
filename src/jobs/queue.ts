@@ -14,6 +14,7 @@ const jobPayloadSchema = z.discriminatedUnion("kind", [
     kind: z.literal("review_mr"),
     project: z.string(),
     mrIid: z.number().int(),
+    sourceBranch: z.string().default("main"),
   }),
   z.object({
     kind: z.literal("handle_mention"),
@@ -22,6 +23,7 @@ const jobPayloadSchema = z.discriminatedUnion("kind", [
     issueIid: z.number().int(),
     prompt: z.string(),
     agentType: agentKindSchema,
+    defaultBranch: z.string().default("main"),
   }),
   z.object({
     kind: z.literal("handle_mr_mention"),
@@ -30,6 +32,7 @@ const jobPayloadSchema = z.discriminatedUnion("kind", [
     mrIid: z.number().int(),
     prompt: z.string(),
     agentType: agentKindSchema,
+    sourceBranch: z.string().default("main"),
   }),
 ]);
 

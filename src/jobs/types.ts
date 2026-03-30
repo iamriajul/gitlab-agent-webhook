@@ -8,6 +8,7 @@ export type JobPayload =
       readonly kind: "review_mr";
       readonly project: string;
       readonly mrIid: number;
+      readonly sourceBranch: string;
     }
   | {
       readonly kind: "handle_mention";
@@ -16,6 +17,7 @@ export type JobPayload =
       readonly issueIid: number;
       readonly prompt: string;
       readonly agentType: AgentKind;
+      readonly defaultBranch: string;
     }
   | {
       readonly kind: "handle_mr_mention";
@@ -24,6 +26,7 @@ export type JobPayload =
       readonly mrIid: number;
       readonly prompt: string;
       readonly agentType: AgentKind;
+      readonly sourceBranch: string;
     };
 
 export interface Job {

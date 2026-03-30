@@ -24,32 +24,17 @@ interface RunnerDependencies {
   readonly clearTimeout: (timeoutId: ReturnType<typeof setTimeout>) => void;
 }
 
-const ALLOWED_PARENT_ENV_KEYS: readonly string[] = [
-  "PATH",
-  "HOME",
-  "SHELL",
-  "TERM",
-  "LANG",
-  "LC_ALL",
-  "LC_CTYPE",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "USER",
-  "LOGNAME",
-  "SSH_AUTH_SOCK",
-  "XDG_CONFIG_HOME",
-  "XDG_CACHE_HOME",
-  "XDG_RUNTIME_DIR",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "NO_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "no_proxy",
-  "SSL_CERT_FILE",
-  "SSL_CERT_DIR",
-];
+const BLOCKED_PARENT_ENV_KEYS: ReadonlySet<string> = new Set([
+  "GITLAB_WEBHOOK_SECRET",
+  "GITLAB_TOKEN",
+  "BOT_USERNAME",
+  "DATABASE_PATH",
+  "DEFAULT_AGENT",
+  "LOG_LEVEL",
+  "WORKER_CONCURRENCY",
+  "AGENT_TIMEOUT_MS",
+  "PORT",
+]);
 
 function formatUnknownError(cause: unknown): string {
   if (cause instanceof Error) {
@@ -75,20 +60,15 @@ export function buildSpawnEnv(
   configEnv: Readonly<Record<string, string>>,
   commandEnv: Readonly<Record<string, string>>,
 ): Record<string, string> {
-  const allowlistedParentEnv = ALLOWED_PARENT_ENV_KEYS.reduce<Record<string, string>>(
-    (accumulator, key) => {
-      const value = parentEnv[key];
-      if (value !== undefined) {
-        accumulator[key] = value;
-      }
-
-      return accumulator;
-    },
-    {},
-  );
+  const filteredParentEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parentEnv)) {
+    if (value !== undefined && !BLOCKED_PARENT_ENV_KEYS.has(key)) {
+      filteredParentEnv[key] = value;
+    }
+  }
 
   return {
-    ...allowlistedParentEnv,
+    ...filteredParentEnv,
     ...configEnv,
     ...commandEnv,
   };

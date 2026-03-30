@@ -119,6 +119,7 @@ describe("webhook queue integration", () => {
       issueIid: 17,
       prompt: "fix this bug",
       agentType: "codex",
+      defaultBranch: "main",
     });
   });
 
@@ -179,6 +180,7 @@ describe("webhook queue integration", () => {
       issueIid: 17,
       prompt: "fix this bug",
       agentType: "codex",
+      defaultBranch: "main",
     });
   });
 

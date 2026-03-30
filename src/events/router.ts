@@ -36,6 +36,7 @@ function createMrReviewDecision(
       kind: "review_mr",
       project,
       mrIid,
+      sourceBranch: event.payload.object_attributes.source_branch,
     },
   };
 }
@@ -73,6 +74,7 @@ export function routeEvent(
           issueIid: event.payload.issue.iid,
           prompt: directive.prompt,
           agentType: directive.agent,
+          defaultBranch: event.payload.project.default_branch,
         },
       });
     }
@@ -103,6 +105,7 @@ export function routeEvent(
           mrIid: event.payload.merge_request.iid,
           prompt: directive.prompt,
           agentType: directive.agent,
+          sourceBranch: event.payload.merge_request.source_branch,
         },
       });
     }

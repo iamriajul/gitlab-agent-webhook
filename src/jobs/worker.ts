@@ -36,7 +36,12 @@ export interface WorkerDependencies {
   readonly logger: Logger;
   readonly defaultAgent: AgentKind;
   readonly workDir: string;
-  readonly prepareWorkspace: (payload: JobPayload, baseWorkDir: string) => Result<string, AppError>;
+  readonly gitlabHost: string;
+  readonly prepareWorkspace: (
+    payload: JobPayload,
+    baseWorkDir: string,
+    gitlabHost: string,
+  ) => Result<string, AppError>;
   readonly env?: Readonly<Record<string, string>>;
   readonly timeoutMs: number;
   readonly spawnAgent: (config: AgentConfig) => Result<AgentProcess, AppError>;
@@ -177,51 +182,10 @@ function coordinationKeyForPayload(payload: JobPayload, agentKind: AgentKind): C
   }
 }
 
-const DEFAULT_AGENT_ENV_KEYS: readonly string[] = [
-  "ANTHROPIC_API_KEY",
-  "CODEX_API_KEY",
-  "GEMINI_API_KEY",
-  "GITLAB_HOST",
-  "GITLAB_TOKEN",
-  "GOOGLE_API_KEY",
-  "GOOGLE_GENAI_API_KEY",
-  "HOME",
-  "OPENAI_API_KEY",
-  "PATH",
-  "SHELL",
-  "TEMP",
-  "TMP",
-  "TMPDIR",
-  "USER",
-  "XDG_CACHE_HOME",
-  "XDG_CONFIG_HOME",
-];
-
-function defaultAgentEnv(): Readonly<Record<string, string>> {
-  const env: Record<string, string> = {};
-
-  for (const key of DEFAULT_AGENT_ENV_KEYS) {
-    const value = process.env[key];
-    if (typeof value === "string") {
-      env[key] = value;
-    }
-  }
-
-  return env;
-}
-
 function buildAgentEnv(
   envOverride?: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
-  const env = defaultAgentEnv();
-  if (envOverride === undefined) {
-    return env;
-  }
-
-  return {
-    ...env,
-    ...envOverride,
-  };
+  return envOverride ?? {};
 }
 
 function buildSystemPrompt(payload: JobPayload): string {
@@ -665,7 +629,11 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
     }
     const jobReaction = reactionResult.value;
 
-    const prepareWorkspaceResult = dependencies.prepareWorkspace(payload, dependencies.workDir);
+    const prepareWorkspaceResult = dependencies.prepareWorkspace(
+      payload,
+      dependencies.workDir,
+      dependencies.gitlabHost,
+    );
     if (prepareWorkspaceResult.isErr()) {
       await transitionReaction(jobReaction, REACTION_FAILED, job.id);
       return err(prepareWorkspaceResult.error);
@@ -869,6 +837,20 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       validateAgentExit(result, agentKind),
     );
     if (completedAgentResult.isErr()) {
+      if (agentResult.isOk()) {
+        dependencies.logger.error(
+          {
+            jobId: job.id,
+            agent: agentKind,
+            exitCode: agentResult.value.exitCode,
+            stdout: agentResult.value.stdout.slice(0, 2000),
+            stderr: agentResult.value.stderr.slice(0, 2000),
+            durationMs: agentResult.value.durationMs,
+          },
+          "Agent process failed",
+        );
+      }
+
       if (interruptedJobs.has(job.id)) {
         await removeAcknowledgmentReaction(jobReaction, job.id);
         return err(queueError("Worker shutdown interrupted active job"));

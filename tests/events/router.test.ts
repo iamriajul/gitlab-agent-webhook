@@ -129,6 +129,7 @@ describe("routeEvent", () => {
         issueIid: 17,
         prompt: "please fix the flaky test",
         agentType: "codex",
+        defaultBranch: "main",
       },
     });
   });
@@ -155,6 +156,7 @@ describe("routeEvent", () => {
         mrIid: 19,
         prompt: "please investigate the review feedback",
         agentType: "claude",
+        sourceBranch: "feat/validation",
       },
     });
   });
@@ -192,6 +194,7 @@ describe("routeEvent", () => {
         kind: "review_mr",
         project: "team/project",
         mrIid: 16,
+        sourceBranch: "feat/validation",
       },
     });
   });
@@ -211,6 +214,7 @@ describe("routeEvent", () => {
         kind: "review_mr",
         project: "team/project",
         mrIid: 16,
+        sourceBranch: "feat/validation",
       },
     });
   });

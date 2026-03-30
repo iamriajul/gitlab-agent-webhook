@@ -45,17 +45,23 @@ function createHandle(
 }
 
 describe("spawnAgent", () => {
-  it("builds child env from an allowlist plus explicit overrides", () => {
+  it("blocks app-specific env vars but passes everything else through", () => {
     const env = buildSpawnEnv(
       {
         PATH: "/usr/bin",
         HOME: "/home/service",
         LANG: "en_US.UTF-8",
         http_proxy: "http://proxy.local:8080",
-        https_proxy: "https://proxy.local:8443",
-        no_proxy: "localhost,127.0.0.1",
+        CLAUDE_CODE_OAUTH_TOKEN: "oauth-token-123",
         GITLAB_WEBHOOK_SECRET: "super-secret",
-        DATABASE_URL: "sqlite:///tmp.db",
+        GITLAB_TOKEN: "parent-token",
+        BOT_USERNAME: "review-bot",
+        DATABASE_PATH: "./data/db.sqlite",
+        DEFAULT_AGENT: "claude",
+        LOG_LEVEL: "info",
+        WORKER_CONCURRENCY: "2",
+        AGENT_TIMEOUT_MS: "600000",
+        PORT: "3000",
       },
       {
         GITLAB_TOKEN: "config-token",
@@ -67,18 +73,21 @@ describe("spawnAgent", () => {
       },
     );
 
-    expect(env).toEqual({
-      PATH: "/command/path",
-      HOME: "/home/service",
-      LANG: "en_US.UTF-8",
-      http_proxy: "http://proxy.local:8080",
-      https_proxy: "https://proxy.local:8443",
-      no_proxy: "localhost,127.0.0.1",
-      GITLAB_TOKEN: "config-token",
-      GEMINI_SYSTEM_MD: "1",
-    });
+    expect(env["PATH"]).toBe("/command/path");
+    expect(env["HOME"]).toBe("/home/service");
+    expect(env["LANG"]).toBe("en_US.UTF-8");
+    expect(env["http_proxy"]).toBe("http://proxy.local:8080");
+    expect(env["CLAUDE_CODE_OAUTH_TOKEN"]).toBe("oauth-token-123");
+    expect(env["GITLAB_TOKEN"]).toBe("config-token");
+    expect(env["GEMINI_SYSTEM_MD"]).toBe("1");
     expect(env["GITLAB_WEBHOOK_SECRET"]).toBeUndefined();
-    expect(env["DATABASE_URL"]).toBeUndefined();
+    expect(env["BOT_USERNAME"]).toBeUndefined();
+    expect(env["DATABASE_PATH"]).toBeUndefined();
+    expect(env["DEFAULT_AGENT"]).toBeUndefined();
+    expect(env["LOG_LEVEL"]).toBeUndefined();
+    expect(env["WORKER_CONCURRENCY"]).toBeUndefined();
+    expect(env["AGENT_TIMEOUT_MS"]).toBeUndefined();
+    expect(env["PORT"]).toBeUndefined();
   });
 
   it("returns command results for a successful run", async () => {

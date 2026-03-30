@@ -27,7 +27,7 @@ describe("createJobQueue", () => {
     const queue = createJobQueue(database);
 
     const enqueueResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 17 },
+      payload: { kind: "review_mr", project: "team/project", mrIid: 17, sourceBranch: "main" },
       idempotencyKey: "mr:team/project:17",
     });
 
@@ -69,6 +69,7 @@ describe("createJobQueue", () => {
         issueIid: 18,
         prompt: "fix it",
         agentType: "codex",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:200",
     });
@@ -80,6 +81,7 @@ describe("createJobQueue", () => {
         issueIid: 18,
         prompt: "fix it",
         agentType: "codex",
+        defaultBranch: "main",
       },
       idempotencyKey: "note:200",
     });
@@ -111,7 +113,7 @@ describe("createJobQueue", () => {
     const queue = createJobQueue(database);
 
     const firstResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 201 },
+      payload: { kind: "review_mr", project: "team/project", mrIid: 201, sourceBranch: "main" },
       idempotencyKey: "mr:201",
     });
     expect(firstResult.isOk()).toBe(true);
@@ -132,7 +134,7 @@ describe("createJobQueue", () => {
     }
 
     const secondResult = queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 201 },
+      payload: { kind: "review_mr", project: "team/project", mrIid: 201, sourceBranch: "main" },
       idempotencyKey: "mr:201",
     });
     expect(secondResult.isOk()).toBe(true);
@@ -157,11 +159,11 @@ describe("createJobQueue", () => {
     const queue = createJobQueue(database);
 
     queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 10 },
+      payload: { kind: "review_mr", project: "team/project", mrIid: 10, sourceBranch: "main" },
       idempotencyKey: "mr:10",
     });
     queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 11 },
+      payload: { kind: "review_mr", project: "team/project", mrIid: 11, sourceBranch: "main" },
       idempotencyKey: "mr:11",
     });
 
@@ -192,7 +194,7 @@ describe("createJobQueue", () => {
     const queue = createJobQueue(database);
 
     queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 12 },
+      payload: { kind: "review_mr", project: "team/project", mrIid: 12, sourceBranch: "main" },
       idempotencyKey: "mr:12",
     });
 
@@ -225,6 +227,7 @@ describe("createJobQueue", () => {
         mrIid: 42,
         prompt: "investigate",
         agentType: "gemini",
+        sourceBranch: "main",
       },
       idempotencyKey: "mr-note:300",
     });
@@ -252,7 +255,7 @@ describe("createJobQueue", () => {
     const queue = createJobQueue(database);
 
     queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 77 },
+      payload: { kind: "review_mr", project: "team/project", mrIid: 77, sourceBranch: "main" },
       idempotencyKey: "mr:77",
     });
 
@@ -292,7 +295,7 @@ describe("createJobQueue", () => {
     const queue = createJobQueue(database);
 
     queue.enqueue({
-      payload: { kind: "review_mr", project: "team/project", mrIid: 78 },
+      payload: { kind: "review_mr", project: "team/project", mrIid: 78, sourceBranch: "main" },
       idempotencyKey: "mr:78",
     });
 
