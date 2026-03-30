@@ -188,37 +188,78 @@ function buildAgentEnv(
   return envOverride ?? {};
 }
 
+const HEADLESS_PREAMBLE = [
+  "You are an autonomous AI coding agent. You are running headless — there is",
+  "no terminal, no user watching. Nobody sees your stdout.",
+  "",
+  "ALL communication with the user MUST go through GitLab comments.",
+  "Use `glab` CLI for all GitLab interaction.",
+].join("\n");
+
+const QUESTION_RULES = [
+  "- Prefer acting over asking. If you can make a reasonable decision, do it.",
+  "- If you MUST ask questions, batch ALL questions into a single GitLab comment",
+  "  as a numbered list. The user will reply with a numbered list of answers.",
+  "  Do NOT use interactive tool-based question flows.",
+].join("\n");
+
 function buildSystemPrompt(payload: JobPayload): string {
   switch (payload.kind) {
     case "handle_mention":
       return [
-        "You are an autonomous AI coding agent running in non-interactive mode.",
-        "There is no user at the terminal. Do not wait for input.",
-        `Project: ${payload.project}`,
-        `Issue: #${payload.issueIid}`,
-        "Create feature branches for code changes.",
-        "Never push to protected branches.",
-        "Use glab CLI for all GitLab interaction and post results back to GitLab.",
+        HEADLESS_PREAMBLE,
+        "",
+        `You are in a git clone of project ${payload.project} on branch agent/issue-${payload.issueIid}.`,
+        "The repo is ready — do NOT clone again.",
+        "",
+        "Your workflow:",
+        `1. Read the issue with \`glab issue view ${payload.issueIid}\` to understand context.`,
+        `2. Read the full comment thread with \`glab api projects/:id/issues/${payload.issueIid}/notes\`.`,
+        "3. Act on the user's request — implement, fix, or answer.",
+        "4. For code changes: commit, push, and create an MR with `glab mr create`.",
+        `5. Post a summary comment on the issue with \`glab issue note ${payload.issueIid} -m "..."\`.`,
+        "",
+        "Rules:",
+        QUESTION_RULES,
+        "- NEVER push to protected branches (main, master). You are on a feature branch.",
+        "- Keep GitLab comments concise and actionable.",
       ].join("\n");
     case "handle_mr_mention":
       return [
-        "You are an autonomous AI coding agent running in non-interactive mode.",
-        "There is no user at the terminal. Do not wait for input.",
-        `Project: ${payload.project}`,
-        `Merge request: !${payload.mrIid}`,
-        "Create feature branches for code changes.",
-        "Never push to protected branches.",
-        "Use glab CLI for all GitLab interaction and post results back to GitLab.",
+        HEADLESS_PREAMBLE,
+        "",
+        `You are in a git clone of project ${payload.project} on the MR source branch (${payload.sourceBranch}).`,
+        "The repo is ready — do NOT clone again.",
+        "",
+        "Your workflow:",
+        `1. Read the MR with \`glab mr view ${payload.mrIid}\` to understand context.`,
+        "2. Read the comment thread to understand what the user wants.",
+        "3. Act on the user's request — implement changes, fix issues, review code.",
+        "4. For code changes: commit and push to the current branch.",
+        `5. Post a summary comment on the MR with \`glab mr note ${payload.mrIid} -m "..."\`.`,
+        "",
+        "Rules:",
+        QUESTION_RULES,
+        "- NEVER push to protected branches. You are on the MR source branch.",
       ].join("\n");
     case "review_mr":
       return [
-        "You are an autonomous AI coding agent running in non-interactive mode.",
-        "There is no user at the terminal. Do not wait for input.",
-        `Project: ${payload.project}`,
-        `Merge request: !${payload.mrIid}`,
-        "Create feature branches for code changes.",
-        "Never push to protected branches.",
-        "Use glab CLI for all GitLab interaction and post results back to GitLab.",
+        HEADLESS_PREAMBLE,
+        "",
+        `You are in a git clone of project ${payload.project} on branch ${payload.sourceBranch}.`,
+        "The repo is ready — do NOT clone again.",
+        "",
+        `Your task: review merge request !${payload.mrIid}.`,
+        "",
+        "Your workflow:",
+        `1. Read the MR with \`glab mr view ${payload.mrIid}\` and \`glab mr diff ${payload.mrIid}\`.`,
+        "2. Analyze the changes for bugs, type safety, error handling, and style.",
+        `3. Post your review as a comment on the MR with \`glab mr note ${payload.mrIid} -m "..."\`.`,
+        "",
+        "Rules:",
+        "- Prefer acting over asking. If you can make a reasonable decision, do it.",
+        "- Post actionable, specific feedback. Reference file paths and line numbers.",
+        "- If the MR looks good, say so concisely.",
       ].join("\n");
   }
 }

@@ -233,7 +233,7 @@ describe("createWorker", () => {
     expect(spawnedConfigs[0]?.sessionId).toBeUndefined();
     expect(spawnedConfigs[0]?.prompt).toContain("Fix the flaky test");
     expect(spawnedConfigs[0]?.systemPrompt).not.toContain("Fix the flaky test");
-    expect(spawnedConfigs[0]?.systemPrompt).toContain("Never push to protected branches.");
+    expect(spawnedConfigs[0]?.systemPrompt).toContain("NEVER push to protected branches");
     expect(preparedWorkspaces).toEqual([`team/project::${process.cwd()}`]);
 
     const lookupSessionResult = sessions.findByContext({
