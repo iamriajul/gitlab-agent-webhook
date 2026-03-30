@@ -27,6 +27,7 @@ export type ReactionTarget =
       readonly mrIid: number;
       readonly noteId: number;
     }
+  | { readonly kind: "issue"; readonly project: string; readonly issueIid: number }
   | { readonly kind: "mr"; readonly project: string; readonly mrIid: number };
 
 interface ReactionMetadata {
@@ -72,6 +73,11 @@ export class GitLabService {
             target.noteId,
             emoji,
           ),
+          toGitlabError,
+        ).andThen(extractAwardId);
+      case "issue":
+        return fromPromise(
+          this.api.IssueAwardEmojis.award(target.project, target.issueIid, emoji),
           toGitlabError,
         ).andThen(extractAwardId);
       case "mr":
@@ -128,6 +134,8 @@ export class GitLabService {
           target.noteId,
           awardId,
         );
+      case "issue":
+        return this.api.IssueAwardEmojis.remove(target.project, target.issueIid, awardId);
       case "mr":
         return this.api.MergeRequestAwardEmojis.remove(target.project, target.mrIid, awardId);
     }
@@ -161,6 +169,8 @@ export class GitLabService {
           target.mrIid,
           target.noteId,
         ]);
+      case "issue":
+        return callListMethod(this.api.IssueAwardEmojis, [target.project, target.issueIid]);
       case "mr":
         return callListMethod(this.api.MergeRequestAwardEmojis, [target.project, target.mrIid]);
     }

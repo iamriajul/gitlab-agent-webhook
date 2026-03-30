@@ -150,7 +150,11 @@ function reactionTargetForPayload(payload: JobPayload): ReactionTarget | null {
   switch (payload.kind) {
     case "handle_mention":
       if (payload.noteId === 0) {
-        return null;
+        return {
+          kind: "issue",
+          project: payload.project,
+          issueIid: payload.issueIid,
+        };
       }
       return {
         kind: "issue_note",
@@ -160,7 +164,11 @@ function reactionTargetForPayload(payload: JobPayload): ReactionTarget | null {
       };
     case "handle_mr_mention":
       if (payload.noteId === 0) {
-        return null;
+        return {
+          kind: "mr",
+          project: payload.project,
+          mrIid: payload.mrIid,
+        };
       }
       return {
         kind: "mr_note",
