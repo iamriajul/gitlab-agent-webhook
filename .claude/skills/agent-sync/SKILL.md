@@ -1,4 +1,10 @@
-# Skill: Agent & Skill Sync
+---
+name: agent-sync
+description: Synchronize skills, agents, and guidance files across .claude/, .agents/, and .codex/ directories. Use after adding or modifying any skill, agent, or guidance file.
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash
+---
+
+# Agent & Skill Sync
 
 Synchronize skills, agents, and guidance files across `.claude/`, `.agents/`, and `.codex/` directories.
 
