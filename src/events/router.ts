@@ -281,8 +281,10 @@ export function routeEvent(
           issueIid: event.payload.object_attributes.iid,
           prompt: [
             "You have been assigned to this issue. Read the issue description and comments carefully.",
-            "If the task is clear and straightforward, implement it and create an MR.",
-            "If the task is complex or ambiguous, post a plan as a comment first, then implement.",
+            "If the issue description clearly specifies what to do, implement it and create an MR.",
+            "If the issue is vague, unclear, or missing details needed to implement,",
+            "do NOT start coding. Instead, post a comment on the issue asking for clarification.",
+            "List your specific questions as a numbered list so the user can answer each one.",
           ].join("\n"),
           agentType: config.defaultAgent,
           defaultBranch: event.payload.project.default_branch,
