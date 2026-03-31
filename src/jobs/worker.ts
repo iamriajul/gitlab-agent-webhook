@@ -55,6 +55,7 @@ export interface WorkerDependencies {
 export interface Worker {
   runNextJob(agentFilter?: AgentKind): Promise<Result<Job | null, AppError>>;
   stop(): void;
+  drain(): Promise<void>;
 }
 
 interface JobReactionState {
@@ -1059,6 +1060,21 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
           );
         });
       }
+    },
+
+    async drain() {
+      shutdownRequested = true;
+      if (activeJobs.size === 0) {
+        return;
+      }
+      dependencies.logger.info(
+        { activeJobs: activeJobs.size },
+        "Draining: waiting for active jobs to finish",
+      );
+      while (activeJobs.size > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      dependencies.logger.info("Drain complete: all active jobs finished");
     },
   };
 }

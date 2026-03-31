@@ -39,6 +39,7 @@ export interface AppRuntime {
   readonly worker: Worker;
   readonly app: ReturnType<typeof createApp>;
   readonly stopWorkers: () => Promise<void>;
+  readonly drainWorkers: () => Promise<void>;
 }
 
 export interface RuntimeLease {
@@ -306,22 +307,32 @@ export function resolveMigrationsFolder(runtimeDir: string): string {
 }
 
 export function registerShutdownHandlers(
-  runtime: Pick<AppRuntime, "logger" | "stopWorkers">,
+  runtime: Pick<AppRuntime, "logger" | "stopWorkers" | "drainWorkers">,
   server: StoppableServer,
   signalRegistrar: SignalRegistrar = process,
 ): void {
   let shuttingDown = false;
+  let forceRequested = false;
 
   for (const signal of SHUTDOWN_SIGNALS) {
     signalRegistrar.on(signal, () => {
+      if (shuttingDown && !forceRequested) {
+        forceRequested = true;
+        runtime.logger.info({ signal }, "Force shutdown requested — killing active agents");
+        void runtime.stopWorkers().finally(() => {
+          signalRegistrar.exit(1);
+        });
+        return;
+      }
+
       if (shuttingDown) {
         return;
       }
 
       shuttingDown = true;
-      runtime.logger.info({ signal }, "Stopping HTTP server and worker lanes");
+      runtime.logger.info({ signal }, "Graceful shutdown: stopping HTTP server, draining workers");
       server.stop(true);
-      void runtime.stopWorkers().finally(() => {
+      void runtime.drainWorkers().finally(() => {
         signalRegistrar.exit(0);
       });
     });
@@ -470,6 +481,10 @@ export function createRuntime(config: Config): Result<AppRuntime, AppError> {
     worker.stop();
     await stopWorkerLanes();
   };
+  const drainWorkers = async () => {
+    await worker.drain();
+    await stopWorkerLanes();
+  };
 
   logger.info(
     {
@@ -493,6 +508,7 @@ export function createRuntime(config: Config): Result<AppRuntime, AppError> {
     worker,
     app,
     stopWorkers,
+    drainWorkers,
   });
 }
 

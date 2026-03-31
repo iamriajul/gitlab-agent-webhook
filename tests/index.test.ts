@@ -75,6 +75,10 @@ describe("registerShutdownHandlers", () => {
           stopWorkersCalls += 1;
           return stopWorkersPromise;
         },
+        drainWorkers() {
+          stopWorkersCalls += 1;
+          return stopWorkersPromise;
+        },
       },
       fakeServer,
       fakeProcess,
@@ -235,6 +239,7 @@ describe("startWorkerLanes", () => {
           return Promise.resolve(ok(null));
         },
         stop() {},
+        async drain() {},
       },
       pino({ enabled: false }),
       [{ agent: "claude", count: 1 }],
@@ -263,6 +268,7 @@ describe("startWorkerLanes", () => {
           return Promise.resolve(ok(null));
         },
         stop() {},
+        async drain() {},
       },
       pino({ enabled: false }),
       [{ agent: "claude", count: 1 }],
