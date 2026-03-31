@@ -2,9 +2,21 @@ import type { AppError } from "../types/errors.ts";
 import type { Result } from "../types/result.ts";
 
 export type AgentType =
-  | { readonly kind: "claude" }
-  | { readonly kind: "codex" }
-  | { readonly kind: "gemini" };
+  | {
+      readonly kind: "claude";
+      readonly model?: string | undefined;
+      readonly effort?: string | undefined;
+    }
+  | {
+      readonly kind: "codex";
+      readonly model?: string | undefined;
+      readonly effort?: string | undefined;
+    }
+  | {
+      readonly kind: "gemini";
+      readonly model?: string | undefined;
+      readonly effort?: string | undefined;
+    };
 
 export interface AgentConfig {
   readonly agent: AgentType;

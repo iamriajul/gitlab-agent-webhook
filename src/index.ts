@@ -14,6 +14,7 @@ import { createApp } from "./server/routes.ts";
 import { createSessionManager, type SessionManager } from "./sessions/manager.ts";
 import type { AppError } from "./types/errors.ts";
 import { queueError } from "./types/errors.ts";
+import type { AgentKind } from "./types/events.ts";
 import { err, ok, type Result } from "./types/result.ts";
 
 const WORKER_IDLE_DELAY_MS = 250;
@@ -254,17 +255,17 @@ function createWorkerEnv(config: Config): Readonly<Record<string, string>> {
 export function startWorkerLanes(
   worker: Worker,
   logger: Logger,
-  concurrency: number,
+  agentLanes: ReadonlyArray<{ readonly agent: AgentKind; readonly count: number }>,
   idleDelayMs = WORKER_IDLE_DELAY_MS,
 ): () => Promise<void> {
   let active = true;
   const lanePromises: Promise<void>[] = [];
 
-  async function runLane(lane: number): Promise<void> {
+  async function runLane(lane: number, agentKind: AgentKind): Promise<void> {
     while (active) {
       let result: Awaited<ReturnType<Worker["runNextJob"]>>;
       try {
-        result = await worker.runNextJob();
+        result = await worker.runNextJob(agentKind);
       } catch (cause) {
         logger.error(
           { error: queueError(`Unhandled worker failure: ${formatUnknownError(cause)}`), lane },
@@ -286,8 +287,12 @@ export function startWorkerLanes(
     }
   }
 
-  for (let index = 0; index < concurrency; index += 1) {
-    lanePromises.push(runLane(index + 1));
+  let laneIndex = 1;
+  for (const { agent, count } of agentLanes) {
+    for (let i = 0; i < count; i += 1) {
+      lanePromises.push(runLane(laneIndex, agent));
+      laneIndex += 1;
+    }
   }
 
   return async () => {
@@ -456,7 +461,11 @@ export function createRuntime(config: Config): Result<AppRuntime, AppError> {
       workDir,
     },
   );
-  const stopWorkerLanes = startWorkerLanes(worker, logger, config.workerConcurrency);
+  const stopWorkerLanes = startWorkerLanes(worker, logger, [
+    { agent: "claude", count: config.claudeConcurrency },
+    { agent: "codex", count: config.codexConcurrency },
+    { agent: "gemini", count: config.geminiConcurrency },
+  ]);
   const stopWorkers = async () => {
     worker.stop();
     await stopWorkerLanes();
@@ -467,7 +476,9 @@ export function createRuntime(config: Config): Result<AppRuntime, AppError> {
       databasePath: config.databasePath,
       port: config.port,
       recoveredJobs: recoveryResult.value,
-      workerConcurrency: config.workerConcurrency,
+      claudeConcurrency: config.claudeConcurrency,
+      codexConcurrency: config.codexConcurrency,
+      geminiConcurrency: config.geminiConcurrency,
     },
     "Runtime initialized",
   );

@@ -12,6 +12,8 @@ export function buildClaudeCommand(config: AgentConfig): AgentCommand {
     "--output-format",
     "stream-json",
   ];
+  const modelArgs: readonly string[] =
+    config.agent.model !== undefined ? ["--model", config.agent.model] : [];
   const resumeSessionId = config.sessionId?.trim();
 
   const systemArgs = ["--append-system-prompt", config.systemPrompt];
@@ -19,14 +21,22 @@ export function buildClaudeCommand(config: AgentConfig): AgentCommand {
   if (resumeSessionId !== undefined && resumeSessionId.length > 0) {
     return {
       command: claudePath(config),
-      args: [...baseArgs, ...systemArgs, "--resume", resumeSessionId, "--", config.prompt],
+      args: [
+        ...baseArgs,
+        ...modelArgs,
+        ...systemArgs,
+        "--resume",
+        resumeSessionId,
+        "--",
+        config.prompt,
+      ],
       env: {},
     };
   }
 
   return {
     command: claudePath(config),
-    args: [...baseArgs, ...systemArgs, "--", config.prompt],
+    args: [...baseArgs, ...modelArgs, ...systemArgs, "--", config.prompt],
     env: {},
   };
 }

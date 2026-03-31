@@ -111,6 +111,8 @@ function routeIssueNote(
       issueIid: event.payload.issue.iid,
       prompt: directive.prompt,
       agentType: directive.agent,
+      model: directive.model,
+      effort: directive.effort,
       defaultBranch: event.payload.project.default_branch,
     },
   };
@@ -158,6 +160,8 @@ function routeMrNote(
       mrIid: event.payload.merge_request.iid,
       prompt: directive.prompt,
       agentType: directive.agent,
+      model: directive.model,
+      effort: directive.effort,
       sourceBranch: event.payload.merge_request.source_branch,
     },
   };

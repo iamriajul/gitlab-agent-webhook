@@ -237,7 +237,7 @@ describe("startWorkerLanes", () => {
         stop() {},
       },
       pino({ enabled: false }),
-      1,
+      [{ agent: "claude", count: 1 }],
       1,
     );
 
@@ -265,7 +265,7 @@ describe("startWorkerLanes", () => {
         stop() {},
       },
       pino({ enabled: false }),
-      1,
+      [{ agent: "claude", count: 1 }],
       1,
     );
 

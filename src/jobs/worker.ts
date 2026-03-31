@@ -1,5 +1,10 @@
 import type { AgentConfig, AgentProcess, AgentResult, AgentType } from "../agents/types.ts";
-import { REACTION_DONE, REACTION_FAILED, REACTION_SEEN } from "../config/constants.ts";
+import {
+  REACTION_DONE,
+  REACTION_FAILED,
+  REACTION_PROGRESS,
+  REACTION_SEEN,
+} from "../config/constants.ts";
 import type { Logger } from "../config/logger.ts";
 import type { ReactionTarget } from "../gitlab/service.ts";
 import type { AgentSession, SessionContext, SessionManager } from "../sessions/manager.ts";
@@ -48,13 +53,14 @@ export interface WorkerDependencies {
 }
 
 export interface Worker {
-  runNextJob(): Promise<Result<Job | null, AppError>>;
+  runNextJob(agentFilter?: AgentKind): Promise<Result<Job | null, AppError>>;
   stop(): void;
 }
 
 interface JobReactionState {
   readonly target: ReactionTarget;
   readonly awardId: number;
+  readonly emoji: EmojiName;
 }
 
 type PendingSessionUpdate =
@@ -86,14 +92,14 @@ function formatUnknownError(cause: unknown): string {
   return String(cause);
 }
 
-function mapAgentType(agentKind: AgentKind): AgentType {
+function mapAgentType(agentKind: AgentKind, model?: string, effort?: string): AgentType {
   switch (agentKind) {
     case "claude":
-      return { kind: "claude" };
+      return { kind: "claude", model, effort };
     case "codex":
-      return { kind: "codex" };
+      return { kind: "codex", model, effort };
     case "gemini":
-      return { kind: "gemini" };
+      return { kind: "gemini", model, effort };
   }
 }
 
@@ -146,6 +152,28 @@ function agentKindForPayload(payload: JobPayload, defaultAgent: AgentKind): Agen
   }
 }
 
+function modelForPayload(payload: JobPayload): string | undefined {
+  switch (payload.kind) {
+    case "handle_mention":
+      return payload.model;
+    case "handle_mr_mention":
+      return payload.model;
+    case "review_mr":
+      return undefined;
+  }
+}
+
+function effortForPayload(payload: JobPayload): string | undefined {
+  switch (payload.kind) {
+    case "handle_mention":
+      return payload.effort;
+    case "handle_mr_mention":
+      return payload.effort;
+    case "review_mr":
+      return undefined;
+  }
+}
+
 function reactionTargetForPayload(payload: JobPayload): ReactionTarget | null {
   switch (payload.kind) {
     case "handle_mention":
@@ -185,12 +213,12 @@ function reactionTargetForPayload(payload: JobPayload): ReactionTarget | null {
   }
 }
 
-function coordinationKeyForPayload(payload: JobPayload, agentKind: AgentKind): CoordinationKey {
+function coordinationKeyForPayload(payload: JobPayload): CoordinationKey {
   switch (payload.kind) {
     case "handle_mention":
-      return `session:issue:${payload.project}:${payload.issueIid}:${agentKind}`;
+      return `session:issue:${payload.project}:${payload.issueIid}`;
     case "handle_mr_mention":
-      return `session:mr:${payload.project}:${payload.mrIid}:${agentKind}`;
+      return `session:mr:${payload.project}:${payload.mrIid}`;
     case "review_mr":
       return `review:${payload.project}:${payload.mrIid}`;
   }
@@ -457,6 +485,7 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       return ok({
         target,
         awardId: reactionResult.value,
+        emoji: REACTION_SEEN,
       });
     }
     const originalReactionError = reactionResult.error;
@@ -489,6 +518,7 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       return ok({
         target,
         awardId: retryReactionResult.value,
+        emoji: REACTION_SEEN,
       });
     }
 
@@ -510,14 +540,14 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       return;
     }
     const removeResult = await runAsyncResult(
-      dependencies.gitlab.removeReaction(reaction.target, REACTION_SEEN, reaction.awardId),
+      dependencies.gitlab.removeReaction(reaction.target, reaction.emoji, reaction.awardId),
     );
     if (removeResult.isErr()) {
       dependencies.logger.warn(
         {
           error: removeResult.error,
           jobId,
-          reaction: REACTION_SEEN,
+          reaction: reaction.emoji,
           target: reaction.target,
         },
         "Failed to remove acknowledgment reaction",
@@ -534,7 +564,7 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       return;
     }
     if (reaction.target.kind === "mr") {
-      for (const terminalEmoji of [REACTION_DONE, REACTION_FAILED]) {
+      for (const terminalEmoji of [REACTION_DONE, REACTION_FAILED, REACTION_PROGRESS]) {
         const clearResult = await runAsyncResult(
           dependencies.gitlab.clearReaction(reaction.target, terminalEmoji),
         );
@@ -573,6 +603,28 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
   ): Promise<void> {
     await removeAcknowledgmentReaction(reaction, jobId);
     await addTerminalReaction(reaction, emoji, jobId);
+  }
+
+  async function transitionToProgressReaction(
+    reaction: JobReactionState,
+    jobId: Job["id"],
+  ): Promise<Result<JobReactionState, AppError>> {
+    await removeAcknowledgmentReaction(reaction, jobId);
+    const addResult = await runAsyncResult(
+      dependencies.gitlab.addReaction(reaction.target, REACTION_PROGRESS),
+    );
+    if (addResult.isErr()) {
+      dependencies.logger.warn(
+        { error: addResult.error, jobId },
+        "Failed to add progress reaction",
+      );
+      return ok(reaction); // Keep old state, non-fatal
+    }
+    return ok({
+      target: reaction.target,
+      awardId: addResult.value,
+      emoji: REACTION_PROGRESS,
+    });
   }
 
   async function markJobFailed(job: Job, error: AppError): Promise<Result<never, AppError>> {
@@ -696,7 +748,7 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
     }
 
     const spawnConfigBase = {
-      agent: mapAgentType(agentKind),
+      agent: mapAgentType(agentKind, modelForPayload(payload), effortForPayload(payload)),
       workDir: prepareWorkspaceResult.value,
       prompt: buildUserPrompt(payload, agentKind, reusableSession),
       systemPrompt: buildSystemPrompt(payload),
@@ -740,6 +792,12 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       const reviewProcess = spawnResult.value;
       spawnedProcess = reviewProcess;
       activeJobs.set(job.id, reviewProcess);
+      if (jobReaction !== null) {
+        const progressResult = await transitionToProgressReaction(jobReaction, job.id);
+        if (progressResult.isOk()) {
+          jobReaction = progressResult.value;
+        }
+      }
     } else {
       if (shutdownRequested) {
         await removeAcknowledgmentReaction(jobReaction, job.id);
@@ -769,6 +827,12 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       }
 
       activeJobs.set(job.id, spawnResult.value);
+      if (jobReaction !== null) {
+        const progressResult = await transitionToProgressReaction(jobReaction, job.id);
+        if (progressResult.isOk()) {
+          jobReaction = progressResult.value;
+        }
+      }
       spawnedProcess = spawnResult.value;
     }
 
@@ -921,7 +985,8 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
   }
 
   return {
-    async runNextJob() {
+    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: agent filtering adds one branch to the existing claim-and-run loop.
+    async runNextJob(agentFilter?: AgentKind) {
       if (shutdownRequested) {
         return ok(null);
       }
@@ -932,9 +997,15 @@ export function createWorker(dependencies: WorkerDependencies): Worker {
       }
 
       for (const pendingJob of pendingJobsResult.value) {
-        const agentKind = agentKindForPayload(pendingJob.payload, dependencies.defaultAgent);
+        if (
+          agentFilter !== undefined &&
+          agentKindForPayload(pendingJob.payload, dependencies.defaultAgent) !== agentFilter
+        ) {
+          continue;
+        }
+
         const runResult = await tryWithCoordinationLock(
-          coordinationKeyForPayload(pendingJob.payload, agentKind),
+          coordinationKeyForPayload(pendingJob.payload),
           async () => claimAndRunPendingJob(pendingJob),
         );
 

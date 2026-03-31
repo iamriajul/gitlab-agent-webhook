@@ -17,6 +17,8 @@ export type JobPayload =
       readonly issueIid: number;
       readonly prompt: string;
       readonly agentType: AgentKind;
+      readonly model?: string | undefined;
+      readonly effort?: string | undefined;
       readonly defaultBranch: string;
     }
   | {
@@ -26,6 +28,8 @@ export type JobPayload =
       readonly mrIid: number;
       readonly prompt: string;
       readonly agentType: AgentKind;
+      readonly model?: string | undefined;
+      readonly effort?: string | undefined;
       readonly sourceBranch: string;
     };
 

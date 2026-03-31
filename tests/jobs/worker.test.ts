@@ -277,6 +277,17 @@ describe("createWorker", () => {
       {
         kind: "reaction",
         target: { kind: "issue_note", project: "team/project", issueIid: 55, noteId: 101 },
+        emoji: "rocket",
+      },
+      {
+        kind: "remove_reaction",
+        target: { kind: "issue_note", project: "team/project", issueIid: 55, noteId: 101 },
+        emoji: "rocket",
+        awardId: 2,
+      },
+      {
+        kind: "reaction",
+        target: { kind: "issue_note", project: "team/project", issueIid: 55, noteId: 101 },
         emoji: "white_check_mark",
       },
     ]);
@@ -371,6 +382,17 @@ describe("createWorker", () => {
       {
         kind: "reaction",
         target: { kind: "mr", project: "team/project", mrIid: 88 },
+        emoji: "rocket",
+      },
+      {
+        kind: "remove_reaction",
+        target: { kind: "mr", project: "team/project", mrIid: 88 },
+        emoji: "rocket",
+        awardId: 2,
+      },
+      {
+        kind: "reaction",
+        target: { kind: "mr", project: "team/project", mrIid: 88 },
         emoji: "white_check_mark",
       },
     ]);
@@ -453,8 +475,8 @@ describe("createWorker", () => {
     }
 
     expect(runResult.value?.status).toBe("completed");
-    expect(clearedReactions).toEqual(["eyes", "white_check_mark", "warning"]);
-    expect(addReactionCount).toBe(3);
+    expect(clearedReactions).toEqual(["eyes", "white_check_mark", "warning", "rocket"]);
+    expect(addReactionCount).toBe(4);
     expect(spawnedConfigs).toHaveLength(1);
   });
 
@@ -539,7 +561,7 @@ describe("createWorker", () => {
 
     expect(runResult.value?.status).toBe("completed");
     expect(clearedReactions).toEqual(["eyes"]);
-    expect(addReactionCount).toBe(3);
+    expect(addReactionCount).toBe(4);
     expect(spawnedConfigs).toHaveLength(1);
   });
 
@@ -612,8 +634,8 @@ describe("createWorker", () => {
     }
 
     expect(runResult.value?.status).toBe("completed");
-    expect(clearedReactions).toEqual(["white_check_mark", "warning"]);
-    expect(addedReactions).toEqual(["eyes", "white_check_mark"]);
+    expect(clearedReactions).toEqual(["white_check_mark", "warning", "rocket"]);
+    expect(addedReactions).toEqual(["eyes", "rocket", "white_check_mark"]);
   });
 
   it("processes an unrelated MR review while a same-MR follow-up stays pending", async () => {
@@ -1980,6 +2002,17 @@ describe("createWorker", () => {
         target: { kind: "mr_note", project: "team/project", mrIid: 31, noteId: 87 },
         emoji: "eyes",
         awardId: 1,
+      },
+      {
+        kind: "reaction",
+        target: { kind: "mr_note", project: "team/project", mrIid: 31, noteId: 87 },
+        emoji: "rocket",
+      },
+      {
+        kind: "remove_reaction",
+        target: { kind: "mr_note", project: "team/project", mrIid: 31, noteId: 87 },
+        emoji: "rocket",
+        awardId: 2,
       },
       {
         kind: "mr_comment",

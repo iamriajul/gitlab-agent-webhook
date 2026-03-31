@@ -5,12 +5,23 @@ function codexPath(config: AgentConfig): string {
 }
 
 export function buildCodexCommand(config: AgentConfig): AgentCommand {
+  const modelArgs: readonly string[] =
+    config.agent.model !== undefined ? ["--model", config.agent.model] : [];
   const resumeSessionId = config.sessionId?.trim();
 
   if (resumeSessionId !== undefined && resumeSessionId.length > 0) {
     return {
       command: codexPath(config),
-      args: ["exec", "resume", resumeSessionId, "--full-auto", "--json", "--", config.prompt],
+      args: [
+        "exec",
+        "resume",
+        resumeSessionId,
+        "--full-auto",
+        "--json",
+        ...modelArgs,
+        "--",
+        config.prompt,
+      ],
       env: {},
     };
   }
@@ -21,6 +32,7 @@ export function buildCodexCommand(config: AgentConfig): AgentCommand {
       "exec",
       "--full-auto",
       "--json",
+      ...modelArgs,
       "--config",
       `developer_instructions=${config.systemPrompt}`,
       "--",
