@@ -246,6 +246,13 @@ const QUESTION_RULES = [
   "  Do NOT use interactive tool-based question flows.",
 ].join("\n");
 
+const COMMIT_RULES = [
+  "- Every commit message MUST end with a Co-Authored-By trailer identifying",
+  "  the agent and model used. Format:",
+  "  Co-Authored-By: <Agent> <Model> (<effort>) <noreply@anthropic.com>",
+  "  Example: Co-Authored-By: Claude Code: Sonnet 4.6 (high) <noreply@anthropic.com>",
+].join("\n");
+
 function buildSystemPrompt(payload: JobPayload): string {
   switch (payload.kind) {
     case "handle_mention":
@@ -264,6 +271,7 @@ function buildSystemPrompt(payload: JobPayload): string {
         "",
         "Rules:",
         QUESTION_RULES,
+        COMMIT_RULES,
         "- NEVER push to protected branches (main, master). You are on a feature branch.",
         "- Keep GitLab comments concise and actionable.",
       ].join("\n");
@@ -283,6 +291,7 @@ function buildSystemPrompt(payload: JobPayload): string {
         "",
         "Rules:",
         QUESTION_RULES,
+        COMMIT_RULES,
         "- NEVER push to protected branches. You are on the MR source branch.",
       ].join("\n");
     case "review_mr":
