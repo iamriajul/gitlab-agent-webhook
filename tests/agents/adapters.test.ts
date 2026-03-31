@@ -122,7 +122,7 @@ describe("agent adapters", () => {
     expect(command.command).toBe("/opt/bin/codex");
     expect(command.args).toEqual([
       "exec",
-      "--full-auto",
+      "--dangerously-bypass-approvals-and-sandbox",
       "--json",
       "--config",
       "developer_instructions=System instructions",
@@ -145,7 +145,7 @@ describe("agent adapters", () => {
       "exec",
       "resume",
       "codex-session-9",
-      "--full-auto",
+      "--dangerously-bypass-approvals-and-sandbox",
       "--json",
       "--",
       "Review the merge request",
@@ -162,7 +162,7 @@ describe("agent adapters", () => {
 
     expect(command.args).toEqual([
       "exec",
-      "--full-auto",
+      "--dangerously-bypass-approvals-and-sandbox",
       "--json",
       "--config",
       "developer_instructions=System instructions",

@@ -16,7 +16,7 @@ export function buildCodexCommand(config: AgentConfig): AgentCommand {
         "exec",
         "resume",
         resumeSessionId,
-        "--full-auto",
+        "--dangerously-bypass-approvals-and-sandbox",
         "--json",
         ...modelArgs,
         "--",
@@ -30,7 +30,7 @@ export function buildCodexCommand(config: AgentConfig): AgentCommand {
     command: codexPath(config),
     args: [
       "exec",
-      "--full-auto",
+      "--dangerously-bypass-approvals-and-sandbox",
       "--json",
       ...modelArgs,
       "--config",
