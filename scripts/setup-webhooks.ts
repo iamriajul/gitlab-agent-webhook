@@ -70,10 +70,10 @@ async function listHooks(projectId: number): Promise<readonly GitLabHook[]> {
   return glabApi<GitLabHook[]>(`projects/${projectId}/hooks`);
 }
 
-function webhookBody(publicUrl: string, secret: string): string {
+function webhookBody(webhookUrl: string, secret: string): string {
   return JSON.stringify({
     name: WEBHOOK_NAME,
-    url: publicUrl,
+    url: webhookUrl,
     token: secret,
     push_events: false,
     tag_push_events: false,
@@ -90,22 +90,22 @@ function webhookBody(publicUrl: string, secret: string): string {
   });
 }
 
-async function createHook(projectId: number, publicUrl: string, secret: string): Promise<void> {
+async function createHook(projectId: number, webhookUrl: string, secret: string): Promise<void> {
   await glabApi(`projects/${projectId}/hooks`, {
     method: "POST",
-    body: webhookBody(publicUrl, secret),
+    body: webhookBody(webhookUrl, secret),
   });
 }
 
 async function updateHook(
   projectId: number,
   hookId: number,
-  publicUrl: string,
+  webhookUrl: string,
   secret: string,
 ): Promise<void> {
   await glabApi(`projects/${projectId}/hooks/${hookId}`, {
     method: "PUT",
-    body: webhookBody(publicUrl, secret),
+    body: webhookBody(webhookUrl, secret),
   });
 }
 
@@ -113,22 +113,71 @@ async function removeHook(projectId: number, hookId: number): Promise<void> {
   await glabApi(`projects/${projectId}/hooks/${hookId}`, { method: "DELETE" });
 }
 
+function extractProjectPath(repoUrl: string): string {
+  try {
+    const parsed = new URL(repoUrl);
+    return parsed.pathname.replace(/^\//, "").replace(/\.git$/, "");
+  } catch {
+    return repoUrl;
+  }
+}
+
+async function getProjectByPath(path: string): Promise<GitLabProject> {
+  return glabApi<GitLabProject>(`projects/${encodeURIComponent(path)}`);
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const remove = args.includes("--remove");
-  const publicUrl = args.find((a) => !a.startsWith("--"));
+  const nonFlags = args.filter((a) => !a.startsWith("--"));
+  let webhookUrl: string | undefined;
+  let repoFilter: string | undefined;
 
-  if (!remove && publicUrl === undefined) {
-    console.error("Usage: bun scripts/setup-webhooks.ts <public-url> [--dry-run] [--remove]");
+  for (const arg of nonFlags) {
+    if (webhookUrl === undefined && arg.startsWith("http")) {
+      webhookUrl = arg;
+    } else if (repoFilter === undefined) {
+      repoFilter = arg;
+    }
+  }
+
+  if (!remove && webhookUrl === undefined) {
+    console.error(
+      "Usage: bun scripts/setup-webhooks.ts <public-url> [repo-url-or-path] [--dry-run] [--remove]",
+    );
+    console.error("");
+    console.error("Examples:");
+    console.error("  bun scripts/setup-webhooks.ts https://webhook.example.com/webhook");
+    console.error(
+      "  bun scripts/setup-webhooks.ts https://webhook.example.com/webhook https://gitlab.com/org/repo",
+    );
+    console.error(
+      "  bun scripts/setup-webhooks.ts https://webhook.example.com/webhook org/repo",
+    );
+    console.error("  bun scripts/setup-webhooks.ts --remove org/repo");
     process.exit(1);
   }
 
   const secret = getEnv("GITLAB_WEBHOOK_SECRET");
 
-  console.log(`Fetching accessible projects...`);
-  const projects = await listProjects();
-  console.log(`Found ${projects.length} projects.\n`);
+  let projects: readonly GitLabProject[];
+  if (repoFilter !== undefined) {
+    const projectPath = extractProjectPath(repoFilter);
+    console.log(`Fetching project ${projectPath}...`);
+    try {
+      const project = await getProjectByPath(projectPath);
+      projects = [project];
+    } catch (error) {
+      console.error(`Failed to find project: ${projectPath}`);
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  } else {
+    console.log("Fetching accessible projects...");
+    projects = await listProjects();
+  }
+  console.log(`Found ${projects.length} project(s).\n`);
 
   let created = 0;
   let updated = 0;
@@ -155,14 +204,14 @@ async function main(): Promise<void> {
     }
 
     if (existing !== undefined) {
-      if (existing.url === publicUrl && existing.note_events && existing.issues_events && existing.merge_requests_events) {
+      if (existing.url === webhookUrl && existing.note_events && existing.issues_events && existing.merge_requests_events) {
         skipped++;
         continue;
       }
       if (dryRun) {
         console.log(`[dry-run] Would update webhook on ${project.path_with_namespace}`);
       } else {
-        await updateHook(project.id, existing.id, publicUrl!, secret);
+        await updateHook(project.id, existing.id, webhookUrl!, secret);
         console.log(`Updated webhook on ${project.path_with_namespace}`);
       }
       updated++;
@@ -170,7 +219,7 @@ async function main(): Promise<void> {
       if (dryRun) {
         console.log(`[dry-run] Would create webhook on ${project.path_with_namespace}`);
       } else {
-        await createHook(project.id, publicUrl!, secret);
+        await createHook(project.id, webhookUrl!, secret);
         console.log(`Created webhook on ${project.path_with_namespace}`);
       }
       created++;
