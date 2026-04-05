@@ -1,5 +1,5 @@
 {
-  "name": "glab-review-webhook",
+  "name": "gitlab-agent-webhook",
   "version": "0.1.0",
   "module": "src/index.ts",
   "type": "module",

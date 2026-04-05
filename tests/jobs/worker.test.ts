@@ -34,7 +34,7 @@ const TEST_AGENT_ENV = {
 };
 
 beforeEach(() => {
-  databasePath = join(tmpdir(), `glab-review-webhook-worker-${crypto.randomUUID()}.sqlite`);
+  databasePath = join(tmpdir(), `gitlab-agent-webhook-worker-${crypto.randomUUID()}.sqlite`);
 });
 
 afterEach(() => {

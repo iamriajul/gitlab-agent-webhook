@@ -6,9 +6,9 @@
 
 ## Project
 
-**glab-review-webhook** — GitLab webhook service that spawns AI coding agents (Claude, Codex, Gemini) for automated code reviews and issue resolution. Built with Bun + TypeScript + Hono + Drizzle/SQLite.
+**gitlab-agent-webhook** — GitLab webhook service that spawns AI coding agents (Claude, Codex, Gemini) for automated code reviews and issue resolution. Built with Bun + TypeScript + Hono + Drizzle/SQLite.
 
-- Origin: `https://gitlab.com/opensource/glab-review-webhook.git`
+- Origin: `git@github.com:iamriajul/gitlab-agent-webhook.git`
 - Default branch: `main`
 
 ## Development Flow

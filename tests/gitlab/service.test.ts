@@ -8,7 +8,7 @@ describe("GitLabService", () => {
       "token",
       "https://gitlab.example.com",
       createLogger("fatal"),
-      "review-bot",
+      "agent",
     );
     const removeCalls: unknown[][] = [];
 
@@ -17,8 +17,8 @@ describe("GitLabService", () => {
         all() {
           return Promise.resolve([
             { id: 1, name: "eyes", user: { username: "alice" } },
-            { id: 2, name: "thumbsup", user: { username: "review-bot" } },
-            { id: 3, name: "eyes", user: { username: "review-bot" } },
+            { id: 2, name: "thumbsup", user: { username: "agent" } },
+            { id: 3, name: "eyes", user: { username: "agent" } },
           ]);
         },
         remove(...args: unknown[]) {

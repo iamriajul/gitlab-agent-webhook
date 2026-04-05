@@ -8,7 +8,7 @@ import { createMigratedDatabase } from "../helpers/database.ts";
 let databasePath = "";
 
 beforeEach(() => {
-  databasePath = join(tmpdir(), `glab-review-webhook-session-${crypto.randomUUID()}.sqlite`);
+  databasePath = join(tmpdir(), `gitlab-agent-webhook-session-${crypto.randomUUID()}.sqlite`);
 });
 
 afterEach(() => {

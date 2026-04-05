@@ -19,7 +19,7 @@ describe("createMigratedDatabase", () => {
   it("tracks applied migrations using drizzle metadata", () => {
     const databasePath = join(
       tmpdir(),
-      `glab-review-webhook-migrated-${crypto.randomUUID()}.sqlite`,
+      `gitlab-agent-webhook-migrated-${crypto.randomUUID()}.sqlite`,
     );
 
     createMigratedDatabase(databasePath);
