@@ -38,3 +38,6 @@ logs
 .workspaces
 
 tmp/
+
+# scratch dirs
+cptest*/
