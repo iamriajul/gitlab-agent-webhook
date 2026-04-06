@@ -21,11 +21,11 @@ describe("extractMentions", () => {
 
 describe("isBotMentioned", () => {
   it("returns true when bot is mentioned", () => {
-    expect(isBotMentioned("@review-bot fix this", "review-bot")).toBe(true);
+    expect(isBotMentioned("@agent fix this", "agent")).toBe(true);
   });
 
   it("returns false when bot is not mentioned", () => {
-    expect(isBotMentioned("@alice please help", "review-bot")).toBe(false);
+    expect(isBotMentioned("@alice please help", "agent")).toBe(false);
   });
 });
 
@@ -75,7 +75,7 @@ describe("parseAgentDirective", () => {
   });
 
   it("preserves leading indentation on the first content line", () => {
-    const note = "@review-bot codex\n    print('x')";
+    const note = "@agent codex\n    print('x')";
     const result = parseAgentDirective(note, "claude");
 
     expect(result.agent).toBe("codex");
@@ -83,7 +83,7 @@ describe("parseAgentDirective", () => {
   });
 
   it("preserves first-line indentation when only mention syntax is stripped", () => {
-    const note = "@review-bot\n    print('x')";
+    const note = "@agent\n    print('x')";
     const result = parseAgentDirective(note, "claude");
 
     expect(result.agent).toBe("claude");
@@ -91,7 +91,7 @@ describe("parseAgentDirective", () => {
   });
 
   it("does not strip mid-sentence directive text from the prompt", () => {
-    const note = "@review-bot please use codex to fix this";
+    const note = "@agent please use codex to fix this";
     const result = parseAgentDirective(note, "claude");
 
     expect(result.agent).toBe("claude");

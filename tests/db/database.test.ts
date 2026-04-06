@@ -17,7 +17,10 @@ function cleanupDatabase(path: string): void {
 
 describe("createDatabase", () => {
   it("does not create application tables before migrations run", () => {
-    const databasePath = join(tmpdir(), `glab-review-webhook-db-${crypto.randomUUID()}.sqlite`);
+    const databasePath = join(
+      tmpdir(),
+      `gitlab-agent-webhook-db-${crypto.randomUUID()}.sqlite`,
+    );
 
     createDatabase(databasePath);
 

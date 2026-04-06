@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "glab-review-webhook",
+      "name": "gitlab-agent-webhook",
       "dependencies": {
         "@gitbeaker/rest": "^43.8.0",
         "drizzle-orm": "^0.45.1",

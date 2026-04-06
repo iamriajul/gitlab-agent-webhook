@@ -11,7 +11,7 @@ import type { WebhookEvent } from "../../src/types/events.ts";
 const logger = pino({ enabled: false });
 
 const routingConfig: RoutingConfig = {
-  botUsername: "review-bot",
+  botUsername: "agent",
   defaultAgent: "claude",
 };
 
@@ -111,7 +111,7 @@ function createMergeRequestEvent(kind: "mr_opened" | "mr_updated"): WebhookEvent
 describe("routeEvent", () => {
   it("routes issue mentions into mention jobs", () => {
     const result = routeEvent(
-      createIssueNoteEvent("@review-bot codex please fix the flaky test"),
+      createIssueNoteEvent("@agent codex please fix the flaky test"),
       routingConfig,
       logger,
     );
@@ -138,7 +138,7 @@ describe("routeEvent", () => {
 
   it("routes MR mentions into MR mention jobs", () => {
     const result = routeEvent(
-      createMrNoteEvent("@review-bot please investigate the review feedback"),
+      createMrNoteEvent("@agent please investigate the review feedback"),
       routingConfig,
       logger,
     );

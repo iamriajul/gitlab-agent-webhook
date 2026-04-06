@@ -15,7 +15,7 @@ import { ok } from "../../src/types/result.ts";
 
 const config: Config = {
   gitlabWebhookSecret: "top-secret",
-  botUsername: "review-bot",
+  botUsername: "agent",
   gitlabToken: "token",
   gitlabHost: "https://gitlab.example.com",
   defaultAgent: "claude",
@@ -44,7 +44,7 @@ const noteOnIssuePayload = {
   },
   object_attributes: {
     id: 100,
-    note: "@review-bot fix this bug",
+    note: "@agent fix this bug",
     noteable_type: "Issue",
     noteable_id: 42,
     action: "create",

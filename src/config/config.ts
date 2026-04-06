@@ -11,7 +11,7 @@ const ConfigSchema = z.object({
   gitlabHost: z.string().url().default("https://gitlab.com"),
   defaultAgent: z.enum(["claude", "codex", "gemini"]).default("claude"),
   port: z.coerce.number().int().positive().default(3000),
-  databasePath: z.string().default("./data/glab-review.db"),
+  databasePath: z.string().default("./data/gitlab-agent-webhook.db"),
   logLevel: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
   claudeConcurrency: z.coerce.number().int().nonnegative().default(2),
   codexConcurrency: z.coerce.number().int().nonnegative().default(1),
