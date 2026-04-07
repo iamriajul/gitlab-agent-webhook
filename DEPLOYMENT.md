@@ -15,13 +15,19 @@ Install these tools on the host:
 - `bun` (runtime + package manager)
 - `git`
 - `pm2` (process manager; installed from project dependencies)
-- `glab` (GitLab CLI, optional but recommended for repo operations)
+- `glab` (GitLab CLI, authenticated)
 
 Agent CLIs you plan to run:
 
 - `claude`
 - `codex`
 - `gemini`
+
+Authenticate `glab` before running webhook automation:
+
+```bash
+glab auth login
+```
 
 ## 2. Environment Setup
 
@@ -78,7 +84,7 @@ https://<your-public-host>/webhook
 The service expects:
 
 - Header: `X-Gitlab-Token` (must match `GITLAB_WEBHOOK_SECRET`)
-- JSON payloads from GitLab Note/Merge Request/Issue events
+- JSON payloads from GitLab webhook events
 
 ### Option A: Manual (GitLab UI)
 
@@ -87,9 +93,9 @@ Project settings -> Webhooks:
 - URL: `https://<your-public-host>/webhook`
 - Secret token: value of `GITLAB_WEBHOOK_SECRET`
 - Enable events:
-  - Note events
-  - Issues events
+  - Issue events
   - Merge request events
+  - Comments
 
 ### Option B: Scripted (`scripts/setup-webhooks.ts`)
 
@@ -98,6 +104,8 @@ The repo includes a webhook automation script:
 ```bash
 bun scripts/setup-webhooks.ts https://<your-public-host>/webhook
 ```
+
+Prerequisite: `glab` CLI must be installed and authenticated.
 
 Examples:
 
