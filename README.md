@@ -24,6 +24,19 @@ That means you can self-host the automation layer, choose your preferred agent b
 - Uses a queue + worker model so webhook responses stay fast
 - Posts acknowledgements and status updates back to GitLab
 
+## GitLab Version Compatibility
+
+**Minimum tested version: GitLab 11.0.** Best-effort support for older self-hosted instances.
+
+| GitLab version | Notes |
+|----------------|-------|
+| 11.0+ | Full support. `assignees` array introduced; older instances send a singular `assignee` which is normalized automatically. |
+| 13.2+ | `draft` field available on MR payloads. Older instances omit it; the service defaults to `false`. |
+| 16.0+ | `DiffNote` note type added. These are parsed and silently ignored (only issue and MR notes trigger agents). |
+| Any | `last_commit` may be absent on empty MRs. The idempotency key falls back to `"no-commit"` so the job still enqueues. |
+
+The `setup-webhooks` script auto-detects the instance version and omits the webhook `name` field when the instance is older than 16.9.
+
 ## Supported Agent Backends
 
 - `claude`

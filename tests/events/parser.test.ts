@@ -198,6 +198,108 @@ describe("parseWebhookPayload", () => {
       }
     });
 
+    it("accepts commit note with null noteable_id and routes to ignored", () => {
+      const payload = {
+        object_kind: "note",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: {
+          id: 200,
+          note: "looks good",
+          noteable_type: "Commit",
+          noteable_id: null, // commits have no numeric DB id
+          action: "create",
+          url: "https://gitlab.example.com/team/project/-/commit/abc123#note_200",
+          system: false,
+        },
+      };
+      const result = parseWebhookPayload("Note Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("ignored");
+      }
+    });
+
+    it("accepts DiffNote noteable_type (GitLab 16+) and routes to ignored", () => {
+      const payload = {
+        object_kind: "note",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: {
+          id: 201,
+          note: "@bot check this line",
+          noteable_type: "DiffNote", // added in GitLab 16
+          noteable_id: null,
+          action: "create",
+          url: "https://gitlab.example.com/team/project/-/merge_requests/5#note_201",
+          system: false,
+        },
+      };
+      const result = parseWebhookPayload("Note Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("ignored");
+      }
+    });
+
+    it("treats MR reopen action as mr_opened", () => {
+      const payload = {
+        object_kind: "merge_request",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: {
+          ...baseMrAttributes,
+          action: "reopen",
+        },
+      };
+      const result = parseWebhookPayload("Merge Request Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("mr_opened");
+      }
+    });
+
+    it("treats issue reopen action as issue_assigned", () => {
+      const payload = {
+        object_kind: "issue",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: {
+          id: 10,
+          iid: 3,
+          title: "Reopened issue",
+          description: null,
+          state: "opened",
+          action: "reopen",
+        },
+      };
+      const result = parseWebhookPayload("Issue Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("issue_assigned");
+      }
+    });
+
+    it("normalizes pre-11.0 singular assignee into assignees array", () => {
+      const payload = {
+        object_kind: "merge_request",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: { ...baseMrAttributes, action: "update" },
+        assignee: { id: 2, username: "agent", name: "Agent Bot" }, // pre-11.0 singular form
+        // no assignees array
+      };
+      const result = parseWebhookPayload("Merge Request Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk() && result.value.kind === "mr_updated") {
+        expect(result.value.payload.assignees).toEqual([
+          { id: 2, username: "agent", name: "Agent Bot" },
+        ]);
+      } else {
+        expect(false).toBe(true); // should have been mr_updated
+      }
+    });
+
     it("accepts project without default_branch field", () => {
       const { default_branch: _, ...projectWithoutBranch } = baseProject;
       const payload = {

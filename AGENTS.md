@@ -133,6 +133,16 @@ tests/                  Mirrors src/ structure
 Required: `GITLAB_WEBHOOK_SECRET`, `BOT_USERNAME`, `GITLAB_TOKEN`, `GITLAB_HOST`.
 Optional: `DEFAULT_AGENT` (claude|codex|gemini, default: claude), `PORT` (default: 3000), `DATABASE_PATH`, `LOG_LEVEL`, `WORKER_CONCURRENCY`, `AGENT_TIMEOUT_MS`, `CLAUDE_PATH`, `CODEX_PATH`, `GEMINI_PATH`. See `.env.example`.
 
+## GitLab Version Compatibility
+
+**Minimum supported: GitLab 11.0+.** When working on webhook parsing or the setup script, apply these rules:
+
+- **New Zod fields must be `.optional()` or `.optional().default(value)`** — never required unless the field has existed since GitLab 10.x.
+- **Never use `z.enum([...])` for `noteable_type`, `action`, or similar string discriminators** — use `z.string()` and handle unknown values by routing to `ignored`.
+- **New `action` values** must be explicitly routed or fall through to the `ignored` case; add a test for each.
+- **`setup-webhooks` script**: new API body fields must be gated on `supportsHookName`-style version detection.
+- See `README.md §GitLab Version Compatibility` for the version matrix.
+
 ## Adding a New Webhook Event Handler
 
 1. Add Zod schema in `src/events/parser.ts`.

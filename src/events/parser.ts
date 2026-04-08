@@ -39,8 +39,8 @@ const MergeRequestInNoteSchema = z.object({
 const NoteAttributesSchema = z.object({
   id: z.number(),
   note: z.string(),
-  noteable_type: z.enum(["Issue", "MergeRequest", "Commit", "Snippet"]),
-  noteable_id: z.number(),
+  noteable_type: z.string(), // kept as string for forward-compat (DiffNote added in 16, future types possible)
+  noteable_id: z.number().nullable(), // null for commit notes (commits have no numeric DB id)
   action: z.string().optional(),
   url: z.string(),
   system: z.boolean(),
@@ -76,14 +76,22 @@ const MRAttributesSchema = z.object({
   last_commit: LastCommitSchema.optional(),
 });
 
-const MergeRequestHookPayload = z.object({
-  object_kind: z.literal("merge_request"),
-  user: UserSchema,
-  project: ProjectSchema,
-  object_attributes: MRAttributesSchema,
-  reviewers: z.array(UserSchema).optional().default([]),
-  assignees: z.array(UserSchema).optional().default([]),
-});
+const MergeRequestHookPayload = z
+  .object({
+    object_kind: z.literal("merge_request"),
+    user: UserSchema,
+    project: ProjectSchema,
+    object_attributes: MRAttributesSchema,
+    assignee: UserSchema.optional(), // pre-11.0 singular form; normalized to assignees below
+    reviewers: z.array(UserSchema).optional().default([]),
+    assignees: z.array(UserSchema).optional().default([]),
+  })
+  .transform(({ assignee, ...rest }) => ({
+    ...rest,
+    // When the array is absent (pre-11.0), promote the singular field into the array
+    assignees:
+      rest.assignees.length > 0 ? rest.assignees : assignee !== undefined ? [assignee] : [],
+  }));
 
 const IssueAttributesSchema = z.object({
   id: z.number(),
@@ -147,7 +155,7 @@ function parseMergeRequestHook(body: unknown): Result<WebhookEvent, AppError> {
   }
   const action = result.data.object_attributes.action;
 
-  if (action === "open") {
+  if (action === "open" || action === "reopen") {
     return ok({ kind: "mr_opened", payload: result.data });
   }
   if (action === "update") {
@@ -170,7 +178,7 @@ function parseIssueHook(body: unknown): Result<WebhookEvent, AppError> {
   if (action === "close") {
     return ok({ kind: "issue_closed", payload: result.data });
   }
-  if (action === "open" || action === "update") {
+  if (action === "open" || action === "reopen" || action === "update") {
     return ok({ kind: "issue_assigned", payload: result.data });
   }
 
