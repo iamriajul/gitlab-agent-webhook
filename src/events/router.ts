@@ -56,7 +56,7 @@ function createMrReviewDecision(
 ): RoutingDecision {
   const project = event.payload.project.path_with_namespace;
   const mrIid = event.payload.object_attributes.iid;
-  const commitSha = event.payload.object_attributes.last_commit.id;
+  const commitSha = event.payload.object_attributes.last_commit?.id ?? "no-commit";
 
   return {
     kind: "enqueue",
@@ -113,7 +113,7 @@ function routeIssueNote(
       agentType: directive.agent,
       model: directive.model,
       effort: directive.effort,
-      defaultBranch: event.payload.project.default_branch,
+      defaultBranch: event.payload.project.default_branch ?? "main",
     },
   };
 }
@@ -287,7 +287,7 @@ export function routeEvent(
             "List your specific questions as a numbered list so the user can answer each one.",
           ].join("\n"),
           agentType: config.defaultAgent,
-          defaultBranch: event.payload.project.default_branch,
+          defaultBranch: event.payload.project.default_branch ?? "main",
         },
       });
     }
