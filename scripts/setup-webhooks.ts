@@ -9,6 +9,8 @@
  */
 
 const WEBHOOK_NAME = "glab-review-webhook";
+// Hook name/title field was added in GitLab 16.9
+const HOOK_NAME_MIN_VERSION: readonly [number, number] = [16, 9];
 
 interface GitLabProject {
   readonly id: number;
@@ -18,10 +20,14 @@ interface GitLabProject {
 interface GitLabHook {
   readonly id: number;
   readonly url: string;
-  readonly name: string;
+  readonly name?: string;
   readonly note_events: boolean;
   readonly issues_events: boolean;
   readonly merge_requests_events: boolean;
+}
+
+interface GitLabVersion {
+  readonly version: string;
 }
 
 function getEnv(key: string): string {
@@ -52,6 +58,22 @@ async function glabApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function getGitLabVersion(): Promise<string> {
+  const info = await glabApi<GitLabVersion>("version");
+  return info.version;
+}
+
+function parseMinorVersion(version: string): readonly [number, number] {
+  const parts = version.split("-")[0].split(".").map(Number);
+  return [parts[0] ?? 0, parts[1] ?? 0];
+}
+
+function supportsHookName(version: string): boolean {
+  const [major, minor] = parseMinorVersion(version);
+  const [minMajor, minMinor] = HOOK_NAME_MIN_VERSION;
+  return major > minMajor || (major === minMajor && minor >= minMinor);
+}
+
 async function listProjects(): Promise<readonly GitLabProject[]> {
   const projects: GitLabProject[] = [];
   let page = 1;
@@ -70,9 +92,9 @@ async function listHooks(projectId: number): Promise<readonly GitLabHook[]> {
   return glabApi<GitLabHook[]>(`projects/${projectId}/hooks`);
 }
 
-function webhookBody(webhookUrl: string, secret: string): string {
+function webhookBody(webhookUrl: string, secret: string, includeNameField: boolean): string {
   return JSON.stringify({
-    name: WEBHOOK_NAME,
+    ...(includeNameField ? { name: WEBHOOK_NAME } : {}),
     url: webhookUrl,
     token: secret,
     push_events: false,
@@ -90,10 +112,15 @@ function webhookBody(webhookUrl: string, secret: string): string {
   });
 }
 
-async function createHook(projectId: number, webhookUrl: string, secret: string): Promise<void> {
+async function createHook(
+  projectId: number,
+  webhookUrl: string,
+  secret: string,
+  includeNameField: boolean,
+): Promise<void> {
   await glabApi(`projects/${projectId}/hooks`, {
     method: "POST",
-    body: webhookBody(webhookUrl, secret),
+    body: webhookBody(webhookUrl, secret, includeNameField),
   });
 }
 
@@ -102,11 +129,24 @@ async function updateHook(
   hookId: number,
   webhookUrl: string,
   secret: string,
+  includeNameField: boolean,
 ): Promise<void> {
   await glabApi(`projects/${projectId}/hooks/${hookId}`, {
     method: "PUT",
-    body: webhookBody(webhookUrl, secret),
+    body: webhookBody(webhookUrl, secret, includeNameField),
   });
+}
+
+function findExistingHook(
+  hooks: readonly GitLabHook[],
+  webhookUrl: string | undefined,
+  includeNameField: boolean,
+): GitLabHook | undefined {
+  if (includeNameField) {
+    return hooks.find((h) => h.name === WEBHOOK_NAME);
+  }
+  // Old GitLab: no name field — match by URL instead
+  return webhookUrl !== undefined ? hooks.find((h) => h.url === webhookUrl) : undefined;
 }
 
 async function removeHook(projectId: number, hookId: number): Promise<void> {
@@ -161,6 +201,15 @@ async function main(): Promise<void> {
 
   const secret = getEnv("GITLAB_WEBHOOK_SECRET");
 
+  console.log("Detecting GitLab version...");
+  const gitlabVersion = await getGitLabVersion();
+  const includeNameField = supportsHookName(gitlabVersion);
+  if (!includeNameField) {
+    console.log(`GitLab ${gitlabVersion} detected — webhook name field not supported, using URL-based matching.`);
+  } else {
+    console.log(`GitLab ${gitlabVersion} detected — webhook name field supported.`);
+  }
+
   let projects: readonly GitLabProject[];
   if (repoFilter !== undefined) {
     const projectPath = extractProjectPath(repoFilter);
@@ -186,7 +235,7 @@ async function main(): Promise<void> {
 
   for (const project of projects) {
     const hooks = await listHooks(project.id);
-    const existing = hooks.find((h) => h.name === WEBHOOK_NAME);
+    const existing = findExistingHook(hooks, webhookUrl, includeNameField);
 
     if (remove) {
       if (existing === undefined) {
@@ -211,7 +260,7 @@ async function main(): Promise<void> {
       if (dryRun) {
         console.log(`[dry-run] Would update webhook on ${project.path_with_namespace}`);
       } else {
-        await updateHook(project.id, existing.id, webhookUrl!, secret);
+        await updateHook(project.id, existing.id, webhookUrl!, secret, includeNameField);
         console.log(`Updated webhook on ${project.path_with_namespace}`);
       }
       updated++;
@@ -219,7 +268,7 @@ async function main(): Promise<void> {
       if (dryRun) {
         console.log(`[dry-run] Would create webhook on ${project.path_with_namespace}`);
       } else {
-        await createHook(project.id, webhookUrl!, secret);
+        await createHook(project.id, webhookUrl!, secret, includeNameField);
         console.log(`Created webhook on ${project.path_with_namespace}`);
       }
       created++;
