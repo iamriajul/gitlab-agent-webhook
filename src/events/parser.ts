@@ -15,7 +15,7 @@ const ProjectSchema = z.object({
   id: z.number(),
   path_with_namespace: z.string(),
   web_url: z.string(),
-  default_branch: z.string(),
+  default_branch: z.string().optional(),
 });
 
 const IssueSchema = z.object({
@@ -41,7 +41,7 @@ const NoteAttributesSchema = z.object({
   note: z.string(),
   noteable_type: z.enum(["Issue", "MergeRequest", "Commit", "Snippet"]),
   noteable_id: z.number(),
-  action: z.enum(["create", "update"]),
+  action: z.string().optional(),
   url: z.string(),
   system: z.boolean(),
 });
@@ -70,10 +70,10 @@ const MRAttributesSchema = z.object({
   state: z.string(),
   source_branch: z.string(),
   target_branch: z.string(),
-  draft: z.boolean(),
+  draft: z.boolean().optional().default(false),
   action: z.string(),
   url: z.string(),
-  last_commit: LastCommitSchema,
+  last_commit: LastCommitSchema.optional(),
 });
 
 const MergeRequestHookPayload = z.object({

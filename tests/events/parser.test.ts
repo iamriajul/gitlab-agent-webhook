@@ -103,4 +103,123 @@ describe("parseWebhookPayload", () => {
     const result = parseWebhookPayload("Note Hook", { object_kind: "note" });
     expect(result.isErr()).toBe(true);
   });
+
+  describe("older GitLab version compatibility", () => {
+    const baseMrAttributes = {
+      id: 93,
+      iid: 16,
+      title: "Add validation",
+      description: "This adds input validation",
+      state: "opened",
+      source_branch: "feat/validation",
+      target_branch: "main",
+      action: "open",
+      url: "https://gitlab.example.com/team/project/-/merge_requests/16",
+      last_commit: {
+        id: "abc123",
+        message: "Add validation",
+        title: "Add validation",
+        url: "https://gitlab.example.com/team/project/-/commit/abc123",
+      },
+    };
+
+    it("accepts MR hook without draft field (pre-13.2)", () => {
+      const payload = {
+        object_kind: "merge_request",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: baseMrAttributes, // no draft field
+      };
+      const result = parseWebhookPayload("Merge Request Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("mr_opened");
+      }
+    });
+
+    it("accepts MR hook without last_commit (empty MR)", () => {
+      const { last_commit: _, ...attrsWithoutCommit } = baseMrAttributes;
+      const payload = {
+        object_kind: "merge_request",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: attrsWithoutCommit,
+      };
+      const result = parseWebhookPayload("Merge Request Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("mr_opened");
+      }
+    });
+
+    it("accepts Note hook with unexpected action value (older GitLab)", () => {
+      const payload = {
+        object_kind: "note",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: {
+          id: 100,
+          note: "@bot fix this",
+          noteable_type: "Issue",
+          noteable_id: 42,
+          action: "note", // old GitLab sent "note" instead of "create"
+          url: "https://gitlab.example.com/team/project/issues/42#note_100",
+          system: false,
+        },
+        issue: { id: 42, iid: 17, title: "Bug", description: null, state: "opened" },
+      };
+      const result = parseWebhookPayload("Note Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("note_on_issue");
+      }
+    });
+
+    it("accepts Note hook without action field", () => {
+      const payload = {
+        object_kind: "note",
+        user: baseUser,
+        project: baseProject,
+        object_attributes: {
+          id: 100,
+          note: "@bot fix this",
+          noteable_type: "Issue",
+          noteable_id: 42,
+          // no action field
+          url: "https://gitlab.example.com/team/project/issues/42#note_100",
+          system: false,
+        },
+        issue: { id: 42, iid: 17, title: "Bug", description: null, state: "opened" },
+      };
+      const result = parseWebhookPayload("Note Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("note_on_issue");
+      }
+    });
+
+    it("accepts project without default_branch field", () => {
+      const { default_branch: _, ...projectWithoutBranch } = baseProject;
+      const payload = {
+        object_kind: "note",
+        user: baseUser,
+        project: projectWithoutBranch,
+        object_attributes: {
+          id: 100,
+          note: "@bot fix this",
+          noteable_type: "Issue",
+          noteable_id: 42,
+          action: "create",
+          url: "https://gitlab.example.com/team/project/issues/42#note_100",
+          system: false,
+        },
+        issue: { id: 42, iid: 17, title: "Bug", description: null, state: "opened" },
+      };
+      const result = parseWebhookPayload("Note Hook", payload);
+      expect(result.isOk()).toBe(true);
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("note_on_issue");
+      }
+    });
+  });
 });
