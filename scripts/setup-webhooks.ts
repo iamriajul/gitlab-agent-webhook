@@ -8,7 +8,7 @@
  *   bun scripts/setup-webhooks.ts https://webhook.example.com/webhook --remove
  */
 
-const WEBHOOK_NAME = "glab-review-webhook";
+const WEBHOOK_NAME = "gitlab-agent-webhook";
 // Hook name/title field was added in GitLab 16.9
 const HOOK_NAME_MIN_VERSION: readonly [number, number] = [16, 9];
 
