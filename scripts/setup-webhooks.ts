@@ -64,7 +64,7 @@ async function getGitLabVersion(): Promise<string> {
 }
 
 function parseMinorVersion(version: string): readonly [number, number] {
-  const parts = version.split("-")[0].split(".").map(Number);
+  const parts = (version.split("-")[0] ?? "").split(".").map(Number);
   return [parts[0] ?? 0, parts[1] ?? 0];
 }
 
@@ -149,6 +149,34 @@ function findExistingHook(
   return webhookUrl !== undefined ? hooks.find((h) => h.url === webhookUrl) : undefined;
 }
 
+export function shouldSkip(hook: GitLabHook, webhookUrl: string, force: boolean): boolean {
+  if (force) return false;
+  return hook.url === webhookUrl && hook.note_events && hook.issues_events && hook.merge_requests_events;
+}
+
+export function parseArgs(args: readonly string[]): {
+  readonly webhookUrl: string | undefined;
+  readonly repoFilter: string | undefined;
+  readonly dryRun: boolean;
+  readonly remove: boolean;
+  readonly force: boolean;
+} {
+  const dryRun = args.includes("--dry-run");
+  const remove = args.includes("--remove");
+  const force = args.includes("--force");
+  const nonFlags = args.filter((a) => !a.startsWith("--"));
+  let webhookUrl: string | undefined;
+  let repoFilter: string | undefined;
+  for (const arg of nonFlags) {
+    if (webhookUrl === undefined && arg.startsWith("http")) {
+      webhookUrl = arg;
+    } else if (repoFilter === undefined) {
+      repoFilter = arg;
+    }
+  }
+  return { webhookUrl, repoFilter, dryRun, remove, force };
+}
+
 async function removeHook(projectId: number, hookId: number): Promise<void> {
   await glabApi(`projects/${projectId}/hooks/${hookId}`, { method: "DELETE" });
 }
@@ -167,24 +195,11 @@ async function getProjectByPath(path: string): Promise<GitLabProject> {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
-  const remove = args.includes("--remove");
-  const nonFlags = args.filter((a) => !a.startsWith("--"));
-  let webhookUrl: string | undefined;
-  let repoFilter: string | undefined;
-
-  for (const arg of nonFlags) {
-    if (webhookUrl === undefined && arg.startsWith("http")) {
-      webhookUrl = arg;
-    } else if (repoFilter === undefined) {
-      repoFilter = arg;
-    }
-  }
+  const { webhookUrl, repoFilter, dryRun, remove, force } = parseArgs(process.argv.slice(2));
 
   if (!remove && webhookUrl === undefined) {
     console.error(
-      "Usage: bun scripts/setup-webhooks.ts <public-url> [repo-url-or-path] [--dry-run] [--remove]",
+      "Usage: bun scripts/setup-webhooks.ts <public-url> [repo-url-or-path] [--dry-run] [--remove] [--force]",
     );
     console.error("");
     console.error("Examples:");
@@ -196,6 +211,9 @@ async function main(): Promise<void> {
       "  bun scripts/setup-webhooks.ts https://webhook.example.com/webhook org/repo",
     );
     console.error("  bun scripts/setup-webhooks.ts --remove org/repo");
+    console.error(
+      "  bun scripts/setup-webhooks.ts https://webhook.example.com/webhook --force  # always update (e.g. after secret rotation)",
+    );
     process.exit(1);
   }
 
@@ -253,7 +271,7 @@ async function main(): Promise<void> {
     }
 
     if (existing !== undefined) {
-      if (existing.url === webhookUrl && existing.note_events && existing.issues_events && existing.merge_requests_events) {
+      if (shouldSkip(existing, webhookUrl!, force)) {
         skipped++;
         continue;
       }
@@ -282,7 +300,9 @@ async function main(): Promise<void> {
   if (skipped > 0) console.log(`  Skipped (unchanged): ${skipped}`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
