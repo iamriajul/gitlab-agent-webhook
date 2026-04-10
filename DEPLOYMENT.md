@@ -125,7 +125,7 @@ bun scripts/setup-webhooks.ts --remove group/project
 
 Script behavior:
 
-- Hook name: `glab-review-webhook`
+- Hook name: `gitlab-agent-webhook`
 - Uses `GITLAB_HOST`, `GITLAB_TOKEN`, `GITLAB_WEBHOOK_SECRET`
 - Creates/updates/removes project hooks via GitLab API
 
